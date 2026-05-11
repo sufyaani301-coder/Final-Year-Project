@@ -1,0 +1,196 @@
+{% extends 'base.html' %}
+{% block title %}Activity Log — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+
+  <!-- Sidebar -->
+  <nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
+    <div class="sidebar-brand">
+      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+    </div>
+
+    <ul class="nav flex-column mt-3 flex-grow-1">
+      <li class="nav-item">
+        <a href="{{ url_for('dashboard') }}" class="nav-link sidebar-link">
+          <i class="bi bi-folder2-open me-2"></i>My Files
+        </a>
+      </li>
+      {% if current_user.is_admin %}
+      <li class="nav-item mt-2">
+        <hr class="sidebar-divider"/>
+        <a href="{{ url_for('admin_panel') }}" class="nav-link sidebar-link">
+          <i class="bi bi-shield-check me-2"></i>Admin
+        </a>
+      </li>
+      {% endif %}
+    </ul>
+
+    <div class="sidebar-footer p-3">
+      <div class="d-flex align-items-center gap-2">
+        <div class="avatar-circle-sm">{{ current_user.initials }}</div>
+        <div class="small lh-sm">
+          <div class="fw-semibold text-truncate" style="max-width:130px">{{ current_user.full_name }}</div>
+          <div class="text-muted" style="font-size:.7rem">{{ current_user.email[:22] }}…</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+  <div class="sidebar-overlay"></div>
+
+  <!-- Main content -->
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <!-- Top navbar -->
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
+        <i class="bi bi-list fs-4"></i>
+      </button>
+      <h5 class="flex-grow-1 mb-0">Activity Log</h5>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left me-1"></i>Back
+      </a>
+    </nav>
+
+    <!-- Content -->
+    <div class="p-4 flex-grow-1 overflow-auto">
+      <div class="container-fluid">
+
+        <!-- Filters -->
+        <div class="row mb-4">
+          <div class="col-12">
+            <div class="card">
+              <div class="card-body">
+                <form method="GET" class="row g-2 align-items-end">
+                  <div class="col-auto">
+                    <label class="form-label" for="actionFilter">Filter by Action</label>
+                    <select id="actionFilter" name="action" class="form-select">
+                      <option value="">All Actions</option>
+                      {% for key, (icon, color) in action_icons.items() %}
+                      <option value="{{ key }}" {% if action_filter == key %}selected{% endif %}>
+                        {{ key.capitalize() }}
+                      </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-auto">
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                    {% if action_filter %}
+                    <a href="{{ url_for('activity_log') }}" class="btn btn-outline-secondary">Clear</a>
+                    {% endif %}
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity Table -->
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Action</th>
+                  <th>User</th>
+                  <th>Details</th>
+                  <th>IP Address</th>
+                  <th>Date & Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in logs.items %}
+                <tr>
+                  <td>
+                    {% if action_icons.get(item.action) %}
+                      {% set icon, color = action_icons[item.action] %}
+                      <i class="bi {{ icon }} {{ color }}"></i>
+                      <span class="ms-2">{{ item.action.capitalize() }}</span>
+                    {% else %}
+                      <span class="badge bg-secondary">{{ item.action }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if item.user %}
+                      <div class="d-flex align-items-center gap-2">
+                        <div class="avatar-circle-sm">{{ item.user.initials }}</div>
+                        {{ item.user.full_name }}
+                      </div>
+                    {% else %}
+                      <span class="text-muted">Unknown</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <span class="text-muted">{{ item.detail[:50] }}{% if item.detail|length > 50 %}…{% endif %}</span>
+                  </td>
+                  <td>
+                    <code class="text-muted small">{{ item.ip_address or '—' }}</code>
+                  </td>
+                  <td>
+                    <small class="text-muted">{{ item.created_at.strftime('%b %d, %Y %H:%M:%S') }}</small>
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="5" class="text-center text-muted py-4">
+                    No activity records found.
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        {% if logs.pages > 1 %}
+        <nav class="mt-4" aria-label="Activity log pagination">
+          <ul class="pagination justify-content-center">
+            {% if logs.has_prev %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('activity_log', page=logs.prev_num, action=action_filter) }}">
+                Previous
+              </a>
+            </li>
+            {% endif %}
+
+            {% for page_num in logs.iter_pages() %}
+              {% if page_num %}
+                {% if page_num == logs.page %}
+                <li class="page-item active"><span class="page-link">{{ page_num }}</span></li>
+                {% else %}
+                <li class="page-item">
+                  <a class="page-link" href="{{ url_for('activity_log', page=page_num, action=action_filter) }}">
+                    {{ page_num }}
+                  </a>
+                </li>
+                {% endif %}
+              {% else %}
+              <li class="page-item disabled"><span class="page-link">…</span></li>
+              {% endif %}
+            {% endfor %}
+
+            {% if logs.has_next %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('activity_log', page=logs.next_num, action=action_filter) }}">
+                Next
+              </a>
+            </li>
+            {% endif %}
+          </ul>
+        </nav>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+});
+</script>
+{% endblock %}

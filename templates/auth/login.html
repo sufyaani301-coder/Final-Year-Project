@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+{% block title %}Login — FileVault{% endblock %}
+
+{% block body %}
+
+<!-- ── Biometric success overlay ── -->
+<div id="bioOverlay" style="
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(255,255,255,0.97);
+  flex-direction:column; align-items:center; justify-content:center;
+  animation: fadeIn .3s ease;">
+  <style>
+    @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+    @keyframes popIn    { 0%{transform:scale(0.5);opacity:0} 70%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
+    @keyframes ringPulse{ 0%{box-shadow:0 0 0 0 rgba(25,135,84,.45)} 70%{box-shadow:0 0 0 22px rgba(25,135,84,0)} 100%{box-shadow:0 0 0 0 rgba(25,135,84,0)} }
+  </style>
+  <div id="bioRing" style="
+    width:130px; height:130px; border-radius:50%;
+    background:linear-gradient(135deg,#198754,#20c997);
+    display:flex; align-items:center; justify-content:center;
+    animation: popIn .5s cubic-bezier(.36,.07,.19,.97) forwards, ringPulse 1.2s .5s infinite;
+    margin-bottom:1.5rem;">
+    <i id="bioIcon" style="font-size:3.8rem; color:#fff;"></i>
+  </div>
+  <h2 id="bioTitle" class="fw-bold text-success mb-1" style="font-size:1.6rem"></h2>
+  <p class="text-muted mb-4">Redirecting to your dashboard…</p>
+  <div class="d-flex gap-2">
+    <div class="spinner-grow text-success" style="width:.55rem;height:.55rem" role="status"></div>
+    <div class="spinner-grow text-success" style="width:.55rem;height:.55rem;animation-delay:.18s" role="status"></div>
+    <div class="spinner-grow text-success" style="width:.55rem;height:.55rem;animation-delay:.36s" role="status"></div>
+  </div>
+</div>
+
+<div class="auth-wrapper d-flex min-vh-100">
+
+  <!-- Left panel -->
+  <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
+    <div class="logo">
+      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+    </div>
+    <div>
+      <h2 class="fw-bold mb-3">Secure file storage<br>with real-time insights.</h2>
+      <p class="opacity-75">Upload, share, and monitor your files — all in one place.</p>
+    </div>
+    <div class="feature-pills d-flex flex-wrap gap-2">
+      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-lock me-1"></i>Encrypted</span>
+      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-lightning me-1"></i>Real-time</span>
+      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-share me-1"></i>Shareable</span>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="auth-form-panel d-flex align-items-center justify-content-center flex-grow-1 p-4">
+    <div class="auth-card w-100" style="max-width:440px">
+
+      <div class="text-center mb-4">
+        <div class="auth-icon mx-auto mb-3"><i class="bi bi-person-fill"></i></div>
+        <h4 class="fw-bold">Welcome back</h4>
+        <p class="text-muted small">Sign in to your FileVault account</p>
+      </div>
+
+      <form method="POST" action="{{ url_for('auth_login') }}" id="loginForm"
+            autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+        <!-- Email — always starts empty -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="loginEmail">Email address</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+            <input type="email" name="email" id="loginEmail" class="form-control"
+                   placeholder="you@filevault.com" required autofocus
+                   autocomplete="off"/>
+          </div>
+        </div>
+
+        <!-- Biometric button — revealed after email check -->
+        <div id="biometricSection" class="d-none mb-3">
+          <button type="button" id="fpBtn"
+                  class="btn btn-outline-primary w-100 py-3 fw-semibold d-none"
+                  onclick="biometricLogin('fingerprint')">
+            <div style="font-size:1.9rem;line-height:1" class="mb-1"><i class="bi bi-fingerprint"></i></div>
+            <div class="small">Sign in with Fingerprint</div>
+          </button>
+          <button type="button" id="faceBtn"
+                  class="btn btn-outline-info w-100 py-3 fw-semibold d-none"
+                  onclick="biometricLogin('face_id')">
+            <div style="font-size:1.9rem;line-height:1" class="mb-1"><i class="bi bi-person-bounding-box"></i></div>
+            <div class="small">Sign in with Face ID</div>
+          </button>
+          <div id="biometricError" class="alert alert-danger d-none small mt-2"></div>
+        </div>
+
+        <!-- Divider -->
+        <div id="biometricDivider" class="d-flex align-items-center gap-2 mb-3 d-none">
+          <hr class="flex-grow-1 m-0"/>
+          <span class="text-muted small px-1">or use password</span>
+          <hr class="flex-grow-1 m-0"/>
+        </div>
+
+        <!-- Password — always starts empty -->
+        <div class="mb-4">
+          <label class="form-label fw-semibold d-flex justify-content-between" for="passwordField">
+            Password
+            <a href="{{ url_for('auth_forgot') }}" class="small text-decoration-none">Forgot password?</a>
+          </label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" name="password" id="passwordField" class="form-control"
+                   placeholder="••••••••" required autocomplete="new-password"/>
+            <button type="button" class="btn btn-outline-secondary" onclick="togglePwd(this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 fw-semibold py-2">
+          <i class="bi bi-box-arrow-in-right me-2"></i>Sign In with Password
+        </button>
+      </form>
+
+      <hr class="my-4"/>
+      <p class="text-center text-muted small mb-0">
+        Don't have an account?
+        <a href="{{ url_for('auth_register') }}" class="fw-semibold text-decoration-none">Create one</a>
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13.1.0/dist/bundle/index.umd.min.js"></script>
+<script>
+document.querySelectorAll('.toast').forEach(t =>
+  setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
+
+function togglePwd(btn) {
+  const f = document.getElementById('passwordField');
+  const show = f.type === 'password';
+  f.type = show ? 'text' : 'password';
+  btn.querySelector('i').className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+}
+
+// Check biometric availability when user finishes typing email
+document.getElementById('loginEmail').addEventListener('blur',   checkBiometric);
+document.getElementById('loginEmail').addEventListener('change', checkBiometric);
+
+async function checkBiometric() {
+  const email   = document.getElementById('loginEmail').value.trim();
+  const section = document.getElementById('biometricSection');
+  const divider = document.getElementById('biometricDivider');
+  const fpBtn   = document.getElementById('fpBtn');
+  const faceBtn = document.getElementById('faceBtn');
+
+  if (!email) {
+    section.classList.add('d-none');
+    divider.classList.add('d-none');
+    return;
+  }
+  try {
+    const resp = await fetch('/auth/check-biometric', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await resp.json();
+    if (data.type) {
+      fpBtn.classList.toggle('d-none',   data.type !== 'fingerprint');
+      faceBtn.classList.toggle('d-none', data.type !== 'face_id');
+      section.classList.remove('d-none');
+      divider.classList.remove('d-none');
+    } else {
+      section.classList.add('d-none');
+      divider.classList.add('d-none');
+    }
+  } catch (_) { /* silent — password login still available */ }
+}
+
+function showSuccess(type) {
+  const overlay = document.getElementById('bioOverlay');
+  const icon    = document.getElementById('bioIcon');
+  const title   = document.getElementById('bioTitle');
+  if (type === 'fingerprint') {
+    icon.className  = 'bi bi-fingerprint';
+    title.textContent = 'Fingerprint Verified!';
+  } else {
+    icon.className  = 'bi bi-person-bounding-box';
+    title.textContent = 'Face ID Verified!';
+  }
+  overlay.style.display = 'flex';
+}
+
+async function biometricLogin(type) {
+  const email   = document.getElementById('loginEmail').value.trim();
+  const errEl   = document.getElementById('biometricError');
+  const fpBtn   = document.getElementById('fpBtn');
+  const faceBtn = document.getElementById('faceBtn');
+  errEl.classList.add('d-none');
+
+  if (!email) {
+    errEl.textContent = 'Please enter your email address first.';
+    errEl.classList.remove('d-none');
+    document.getElementById('loginEmail').focus();
+    return;
+  }
+
+  fpBtn.disabled   = true;
+  faceBtn.disabled = true;
+  const activeBtn  = type === 'fingerprint' ? fpBtn : faceBtn;
+  activeBtn.innerHTML =
+    '<span class="spinner-border spinner-border-sm d-block mx-auto mb-1"></span>' +
+    '<div class="small">Waiting for device…</div>';
+
+  try {
+    const beginResp = await fetch('/auth/webauthn-login/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ email }),
+    });
+    const options = await beginResp.json();
+    if (!beginResp.ok) throw new Error(options.error || 'Could not start biometric login.');
+
+    const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+    const completeResp = await fetch('/auth/webauthn-login/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(authResp),
+    });
+    const result = await completeResp.json();
+    if (result.success) {
+      showSuccess(type);
+      setTimeout(() => { window.location.href = result.redirect; }, 1800);
+    } else {
+      throw new Error(result.error || 'Authentication failed.');
+    }
+  } catch (err) {
+    fpBtn.disabled    = false;
+    faceBtn.disabled  = false;
+    fpBtn.innerHTML   =
+      '<div style="font-size:1.9rem;line-height:1" class="mb-1"><i class="bi bi-fingerprint"></i></div>' +
+      '<div class="small">Sign in with Fingerprint</div>';
+    faceBtn.innerHTML =
+      '<div style="font-size:1.9rem;line-height:1" class="mb-1"><i class="bi bi-person-bounding-box"></i></div>' +
+      '<div class="small">Sign in with Face ID</div>';
+    if (err.name !== 'NotAllowedError') {
+      errEl.textContent = err.message;
+      errEl.classList.remove('d-none');
+    }
+  }
+}
+</script>
+{% endblock %}

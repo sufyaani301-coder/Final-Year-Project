@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block title %}Set Up Recovery Code — FileVault{% endblock %}
+
+{% block body %}
+<div class="auth-wrapper d-flex min-vh-100">
+
+  <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
+    <div class="logo"><i class="bi bi-shield-lock-fill me-2"></i>FileVault</div>
+    <div>
+      <h2 class="fw-bold mb-3">Protect your<br>account.</h2>
+      <p class="opacity-75">Two-factor authentication adds an extra layer of security to your account.</p>
+    </div>
+    <div></div>
+  </div>
+
+  <div class="auth-form-panel d-flex align-items-center justify-content-center flex-grow-1 p-4">
+    <div class="auth-card w-100" style="max-width:500px">
+
+      <div class="text-center mb-4">
+        <div class="auth-icon mx-auto mb-3"><i class="bi bi-qr-code-scan"></i></div>
+        <h4 class="fw-bold">Set Up Recovery Code</h4>
+        <p class="text-muted small">
+          Scan this QR code with Google Authenticator or Authy.
+          This code is used to verify your identity when you forget your password.
+        </p>
+      </div>
+
+      <!-- Step 1 -->
+      <p class="fw-semibold mb-2">
+        <span class="badge bg-primary rounded-pill me-2">1</span>Scan this QR code with your app
+      </p>
+      <div class="text-center p-3 bg-white border rounded-3 mb-3">
+        <img src="data:image/png;base64,{{ qr_b64 }}" alt="QR code — scan with your authenticator app"
+             style="width:200px;height:200px;image-rendering:pixelated"/>
+      </div>
+
+      <!-- Step 2 -->
+      <p class="fw-semibold mb-1">
+        <span class="badge bg-primary rounded-pill me-2">2</span>Or enter this key manually
+      </p>
+      <div class="input-group mb-4">
+        <input type="text" id="manualKey" class="form-control text-center fw-bold font-monospace"
+               value="{{ secret }}" readonly style="letter-spacing:.1em"/>
+        <button class="btn btn-outline-secondary" type="button"
+                onclick="copyKey()" title="Copy key" aria-label="Copy secret key">
+          <i class="bi bi-clipboard" id="copyIcon"></i>
+        </button>
+      </div>
+
+      <!-- Step 3 -->
+      <p class="fw-semibold mb-2">
+        <span class="badge bg-primary rounded-pill me-2">3</span>Enter the 6-digit code to confirm
+      </p>
+      <form method="POST" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="input-group mb-3">
+          <span class="input-group-text"><i class="bi bi-phone"></i></span>
+          <input type="text" name="code" class="form-control text-center fw-bold fs-5"
+                 placeholder="000000" maxlength="6" inputmode="numeric"
+                 autocomplete="one-time-code" required autofocus
+                 style="letter-spacing:.3em"/>
+        </div>
+        <button type="submit" class="btn btn-success w-100 fw-semibold py-2">
+          <i class="bi bi-shield-check me-2"></i>Enable Two-Factor Authentication
+        </button>
+      </form>
+
+      <hr class="my-3"/>
+      <p class="text-center text-muted small mb-0">
+        <a href="{{ url_for('profile') }}" class="fw-semibold text-decoration-none">
+          <i class="bi bi-arrow-left me-1"></i>Cancel
+        </a>
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.toast').forEach(t =>
+  setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 5000));
+document.querySelector('input[name="code"]')?.addEventListener('input', function () {
+  this.value = this.value.replaceAll(/\D/g, '').slice(0, 6);
+});
+function copyKey() {
+  navigator.clipboard.writeText(document.getElementById('manualKey').value);
+  const icon = document.getElementById('copyIcon');
+  icon.className = 'bi bi-check2';
+  setTimeout(() => icon.className = 'bi bi-clipboard', 2000);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+{% block title %}Two-Factor Verification — FileVault{% endblock %}
+
+{% block body %}
+<div class="auth-wrapper d-flex min-vh-100">
+
+  <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
+    <div class="logo"><i class="bi bi-shield-lock-fill me-2"></i>FileVault</div>
+    <div>
+      <h2 class="fw-bold mb-3">One more step<br>to keep you safe.</h2>
+      <p class="opacity-75">Verify your identity to continue.</p>
+    </div>
+    <div></div>
+  </div>
+
+  <div class="auth-form-panel d-flex align-items-center justify-content-center flex-grow-1 p-4">
+    <div class="auth-card w-100" style="max-width:440px">
+
+      <div class="text-center mb-4">
+        <div class="auth-icon mx-auto mb-3"><i class="bi bi-shield-check"></i></div>
+        <h4 class="fw-bold">Two-Factor Verification</h4>
+        <p class="text-muted small">
+          {% if totp_available and webauthn_available %}
+            Choose how you'd like to verify your identity.
+          {% elif webauthn_available %}
+            Use your fingerprint, Face ID, or Windows Hello to continue.
+          {% else %}
+            Enter the code from your authenticator app.
+          {% endif %}
+        </p>
+      </div>
+
+      {% if webauthn_available %}
+      <!-- ── Fingerprint / WebAuthn ── -->
+      <div id="webauthnPanel">
+        <div class="text-center mb-4">
+          <div style="font-size:3.5rem; line-height:1" class="mb-3">
+            <i class="bi bi-fingerprint text-primary"></i>
+          </div>
+          <p class="text-muted small mb-3">
+            Your browser will ask you to use your fingerprint, Face ID, or Windows Hello.
+          </p>
+          <button id="fingerprintBtn" type="button"
+                  class="btn btn-primary w-100 fw-semibold py-2"
+                  onclick="verifyWithFingerprint()">
+            <i class="bi bi-fingerprint me-2"></i>Use Fingerprint / Biometric
+          </button>
+          <div id="fingerprintError" class="alert alert-danger mt-3 d-none small"></div>
+        </div>
+        {% if totp_available %}
+        <p class="text-center small text-muted mt-3">
+          <button type="button" class="btn btn-link btn-sm p-0 fw-semibold text-decoration-none"
+                  onclick="showTotp()">
+            Use authenticator code instead
+          </button>
+        </p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if totp_available %}
+      <!-- ── TOTP ── -->
+      <div id="totpPanel" {% if webauthn_available %}class="d-none"{% endif %}>
+        <form method="POST" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <div class="mb-4">
+            <label class="form-label fw-semibold" for="mfaCode">Authentication Code</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-phone"></i></span>
+              <input type="text" name="code" id="mfaCode" class="form-control text-center fw-bold fs-5"
+                     placeholder="000000" maxlength="6" inputmode="numeric"
+                     autocomplete="one-time-code" required autofocus
+                     style="letter-spacing:.3em"/>
+            </div>
+            <small class="text-muted">Code refreshes every 30 seconds.</small>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 fw-semibold py-2">
+            <i class="bi bi-arrow-right me-2"></i>Verify
+          </button>
+        </form>
+        {% if webauthn_available %}
+        <p class="text-center small text-muted mt-3">
+          <button type="button" class="btn btn-link btn-sm p-0 fw-semibold text-decoration-none"
+                  onclick="showWebAuthn()">
+            <i class="bi bi-fingerprint me-1"></i>Use fingerprint instead
+          </button>
+        </p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <hr class="my-4"/>
+      <p class="text-center text-muted small mb-0">
+        <a href="{{ url_for('auth_login') }}" class="fw-semibold text-decoration-none">
+          <i class="bi bi-arrow-left me-1"></i>Back to login
+        </a>
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13.1.0/dist/bundle/index.umd.min.js"></script>
+<script>
+document.querySelectorAll('.toast').forEach(t =>
+  setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 5000));
+document.querySelector('input[name="code"]')?.addEventListener('input', function () {
+  this.value = this.value.replaceAll(/\D/g, '').slice(0, 6);
+});
+
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+function showWebAuthn() {
+  document.getElementById('totpPanel')?.classList.add('d-none');
+  document.getElementById('webauthnPanel')?.classList.remove('d-none');
+}
+function showTotp() {
+  document.getElementById('webauthnPanel')?.classList.add('d-none');
+  document.getElementById('totpPanel')?.classList.remove('d-none');
+}
+
+async function verifyWithFingerprint() {
+  const btn   = document.getElementById('fingerprintBtn');
+  const errEl = document.getElementById('fingerprintError');
+  errEl.classList.add('d-none');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Waiting for biometric…';
+
+  try {
+    const optResp = await fetch('/auth/webauthn/begin', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': CSRF },
+    });
+    const options = await optResp.json();
+    if (!optResp.ok) throw new Error(options.error || 'Failed to start verification.');
+
+    const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+    const verifyResp = await fetch('/auth/webauthn/complete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': CSRF,
+      },
+      body: JSON.stringify(authResp),
+    });
+    const result = await verifyResp.json();
+    if (result.success) {
+      window.location.href = result.redirect;
+    } else {
+      throw new Error(result.error || 'Verification failed.');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-fingerprint me-2"></i>Use Fingerprint / Biometric';
+    if (err.name !== 'NotAllowedError') {
+      errEl.textContent = err.message;
+      errEl.classList.remove('d-none');
+    }
+  }
+}
+
+// Auto-trigger fingerprint if TOTP is not available
+{% if webauthn_available and not totp_available %}
+window.addEventListener('load', () => setTimeout(verifyWithFingerprint, 300));
+{% endif %}
+</script>
+{% endblock %}

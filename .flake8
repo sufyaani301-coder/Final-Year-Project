@@ -1,0 +1,4 @@
+[flake8]
+ignore = E,W,F,C,N,B,S
+max-line-length = 9999
+exclude = app.py
