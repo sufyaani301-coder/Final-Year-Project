@@ -495,10 +495,6 @@
 document.querySelectorAll('.toast').forEach(t =>
   setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
 
-// Sidebar toggle
-document.getElementById('sidebarToggle')?.addEventListener('click', () =>
-  document.getElementById('sidebar').classList.toggle('open'));
-
 // ── Drag & drop ──
 const dz = document.getElementById('dropZone');
 const fi = document.getElementById('fileInput');
