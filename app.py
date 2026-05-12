@@ -3,6 +3,8 @@
 # pylint: disable=all
 # mypy: ignore-errors
 # type: ignore
+import eventlet
+eventlet.monkey_patch()
 import os
 import re
 import secrets
