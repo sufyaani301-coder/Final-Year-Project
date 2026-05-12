@@ -250,6 +250,13 @@
               <i class="bi bi-download"></i>
             </a>
 
+            {% if file.is_encrypted %}
+            <button class="btn btn-sm btn-outline-warning flex-fill" title="Decrypt &amp; Download"
+                    onclick="openDecryptModal('{{ file.uuid }}', '{{ file.original_name | e }}')">
+              <i class="bi bi-unlock"></i>
+            </button>
+            {% endif %}
+
             {% if file.user_id == current_user.id %}
 
             <!-- Rename -->
@@ -491,6 +498,32 @@
   </div>
 </div>
 
+<!-- ── Decrypt modal ── -->
+<div class="modal fade" id="decryptModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-unlock me-2 text-warning"></i>Decrypt &amp; Download</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-1">File: <span id="decryptFileName" class="fw-semibold text-body"></span></p>
+        <p class="small text-muted mb-3">Enter your account password to decrypt and download this file.</p>
+        <label class="form-label small fw-semibold" for="decryptPassword">Your password</label>
+        <input type="password" class="form-control form-control-sm" id="decryptPassword"
+               placeholder="Enter your password" autocomplete="current-password"/>
+        <div class="invalid-feedback" id="decryptError"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning text-white" id="decryptBtn" onclick="doDecrypt()">
+          <i class="bi bi-unlock me-1"></i>Decrypt &amp; Download
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 document.querySelectorAll('.toast').forEach(t =>
   setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
@@ -686,6 +719,64 @@ function copyLink() {
   const icon = document.getElementById('linkCopyIcon');
   icon.className = 'bi bi-check2';
   setTimeout(() => icon.className = 'bi bi-clipboard', 2000);
+}
+
+// ── Decrypt & Download ──
+let _decryptUuid = null;
+
+function openDecryptModal(fileUuid, fileName) {
+  _decryptUuid = fileUuid;
+  document.getElementById('decryptFileName').textContent = `"${fileName}"`;
+  const pw = document.getElementById('decryptPassword');
+  pw.value = '';
+  pw.classList.remove('is-invalid');
+  document.getElementById('decryptError').textContent = '';
+  new bootstrap.Modal(document.getElementById('decryptModal')).show();
+  setTimeout(() => pw.focus(), 400);
+}
+
+async function doDecrypt() {
+  const pw = document.getElementById('decryptPassword');
+  const errEl = document.getElementById('decryptError');
+  if (!pw.value) {
+    pw.classList.add('is-invalid');
+    errEl.textContent = 'Please enter your password.';
+    return;
+  }
+  const btn = document.getElementById('decryptBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Decrypting…';
+
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('password', pw.value);
+
+  const r = await fetch(`/decrypt/${_decryptUuid}`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    body: form,
+  });
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
+
+  if (r.ok) {
+    const blob = await r.blob();
+    const cd = r.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+    const fname = match ? match[1].replace(/['"]/g, '') : 'decrypted_file';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
+  } else {
+    const data = await r.json().catch(() => ({}));
+    pw.classList.add('is-invalid');
+    errEl.textContent = data.error || 'Decryption failed. Check your password.';
+  }
 }
 
 async function deleteLink() {

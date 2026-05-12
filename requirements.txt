@@ -17,3 +17,4 @@ cryptography==43.0.3
 python-dotenv==1.0.1
 webauthn==2.2.0
 gunicorn==22.0.0
+psycopg2-binary==2.9.9

@@ -66,7 +66,10 @@ if _secret == 'dev-key-change-in-production':
         stacklevel=2,
     )
 app.config['SECRET_KEY'] = _secret
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vault.db'
+_db_url = os.environ.get('DATABASE_URL', 'sqlite:///vault.db')
+if _db_url.startswith('postgres://'):          # Render gives postgres://, SQLAlchemy needs postgresql://
+    _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'vault_uploads')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024    # 50 MB
@@ -955,6 +958,27 @@ def download_file(file_uuid):
                          download_name=rec.original_name, mimetype=rec.mimetype)
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
                                as_attachment=True, download_name=rec.original_name)
+
+
+@app.route('/decrypt/<file_uuid>', methods=['POST'])
+@login_required
+def decrypt_file(file_uuid):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
+        abort(403)
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password.'), 403
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+    if rec.is_encrypted and fernet:
+        data = fernet.decrypt(open(file_path, 'rb').read())
+    else:
+        with open(file_path, 'rb') as fh:
+            data = fh.read()
+    log_activity('download', f'Decrypted & downloaded "{rec.original_name}"')
+    db.session.commit()
+    return send_file(io.BytesIO(data), as_attachment=True,
+                     download_name=rec.original_name, mimetype=rec.mimetype)
 
 
 @app.route('/preview/<file_uuid>')
