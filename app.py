@@ -93,7 +93,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db       = SQLAlchemy(app)
 migrate  = Migrate(app, db)
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth_login'
 login_manager.login_message = 'Please log in to access this page.'
