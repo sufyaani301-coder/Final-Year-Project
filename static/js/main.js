@@ -29,13 +29,28 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Sidebar toggle + overlay
-  document.querySelectorAll('#sidebarToggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.getElementById('sidebar')?.classList.toggle('open');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  const sidebarOverlay = document.querySelector('.sidebar-overlay');
+
+  if (sidebarToggle && sidebar) {
+    sidebarToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      sidebar.classList.toggle('open');
+      if (sidebarOverlay) sidebarOverlay.classList.toggle('active');
     });
-  });
-  document.querySelector('.sidebar-overlay')?.addEventListener('click', () => {
-    document.getElementById('sidebar')?.classList.remove('open');
+  }
+  if (sidebarOverlay) {
+    sidebarOverlay.addEventListener('click', function () {
+      sidebar.classList.remove('open');
+      sidebarOverlay.classList.remove('active');
+    });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && sidebar) {
+      sidebar.classList.remove('open');
+      if (sidebarOverlay) sidebarOverlay.classList.remove('active');
+    }
   });
 });
 

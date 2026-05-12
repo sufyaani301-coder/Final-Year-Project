@@ -203,7 +203,8 @@ a:hover { color: var(--brand-dark); }
   .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
   .sidebar-overlay { display: none; position: fixed; inset: 0;
                      background: rgba(0,0,0,.4); z-index: 199; }
-  .sidebar.open + .sidebar-overlay { display: block; }
+  .sidebar.open + .sidebar-overlay,
+  .sidebar-overlay.active { display: block; }
 }
 
 /* ── 6. Top Navbar ────────────────────────────────────────── */
