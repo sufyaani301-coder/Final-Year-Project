@@ -63,8 +63,8 @@
           <div class="stat-card">
             <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-shield-check"></i></div>
             <div>
-              <div class="stat-value">{{ user_stats | selectattr('user.is_admin') | list | length }}</div>
-              <div class="stat-label">Admins</div>
+              <div class="stat-value">{{ user_stats | selectattr('user.role', 'ne', 'user') | list | length }}</div>
+              <div class="stat-label">Privileged Users</div>
             </div>
           </div>
         </div>
@@ -109,28 +109,32 @@
                 <td>{{ stat.total_size }}</td>
                 <td class="text-muted small">{{ u.created_at.strftime('%b %d, %Y') }}</td>
                 <td>
-                  {% if u.is_admin %}
-                    <span class="badge bg-warning text-dark"><i class="bi bi-shield-check me-1"></i>Admin</span>
-                  {% else %}
-                    <span class="badge bg-secondary">User</span>
-                  {% endif %}
+                  {% set role = u.role if u.role else ('super_admin' if u.is_admin else 'user') %}
+                  <span class="badge role-badge-{{ role }} px-2 py-1" style="font-size:.72rem">
+                    {% if role == 'super_admin' %}<i class="bi bi-shield-fill-check me-1"></i>Super Admin
+                    {% elif role == 'analyst'   %}<i class="bi bi-bar-chart-fill me-1"></i>Analyst
+                    {% elif role == 'auditor'   %}<i class="bi bi-eye-fill me-1"></i>Auditor
+                    {% else                     %}<i class="bi bi-person me-1"></i>User{% endif %}
+                  </span>
                 </td>
                 <td>
                   {% if u.id != current_user.id %}
-                  <div class="d-flex gap-1">
-                    <form method="POST" action="{{ url_for('toggle_admin', user_id=u.id) }}">
+                  <div class="d-flex gap-1 align-items-center">
+                    <!-- Role change dropdown -->
+                    <form method="POST" action="{{ url_for('change_role', user_id=u.id) }}" class="d-flex gap-1">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                      <button type="submit" class="btn btn-sm {{ 'btn-outline-warning' if u.is_admin else 'btn-outline-primary' }}"
-                              title="{{ 'Revoke Admin' if u.is_admin else 'Make Admin' }}"
-                              aria-label="{{ 'Revoke Admin for ' + u.full_name if u.is_admin else 'Make Admin ' + u.full_name }}">
-                        <i class="bi {{ 'bi-shield-x' if u.is_admin else 'bi-shield-plus' }}"></i>
-                      </button>
+                      <select name="role" class="form-select form-select-sm" style="width:auto;font-size:.75rem"
+                              onchange="this.form.submit()" title="Change role">
+                        <option value="user"        {% if u.role=='user'        %}selected{% endif %}>User</option>
+                        <option value="auditor"     {% if u.role=='auditor'     %}selected{% endif %}>Auditor</option>
+                        <option value="analyst"     {% if u.role=='analyst'     %}selected{% endif %}>Analyst</option>
+                        <option value="super_admin" {% if u.role=='super_admin' %}selected{% endif %}>Super Admin</option>
+                      </select>
                     </form>
                     <form method="POST" action="{{ url_for('delete_user', user_id=u.id) }}"
                           onsubmit="return confirm('Delete user {{ u.full_name }} and all their files?')">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                      <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete user"
-                              aria-label="Delete user {{ u.full_name }}">
+                      <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete user">
                         <i class="bi bi-person-x"></i>
                       </button>
                     </form>

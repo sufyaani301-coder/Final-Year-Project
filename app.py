@@ -53,6 +53,7 @@ from webauthn.helpers.structs import (
     PublicKeyCredentialDescriptor,
 )
 import json as _json
+import hashlib
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -150,6 +151,7 @@ class User(UserMixin, db.Model):
     email               = db.Column(db.String(120), unique=True, nullable=False)
     password_hash       = db.Column(db.String(256), nullable=False)
     is_admin            = db.Column(db.Boolean, default=False)
+    role                = db.Column(db.String(20), default='user', nullable=False)
     created_at          = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     mfa_secret          = db.Column(db.String(32),  nullable=True)
     mfa_enabled         = db.Column(db.Boolean, default=False)
@@ -174,6 +176,23 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
     @property
+    def is_super_admin(self):
+        return self.role == 'super_admin'
+
+    @property
+    def is_analyst(self):
+        return self.role in ('super_admin', 'analyst')
+
+    @property
+    def is_auditor(self):
+        return self.role in ('super_admin', 'analyst', 'auditor')
+
+    @property
+    def role_label(self):
+        return {'super_admin': 'Super Admin', 'analyst': 'Analyst',
+                'auditor': 'Auditor', 'user': 'User'}.get(self.role, 'User')
+
+    @property
     def initials(self):
         parts = [p for p in self.full_name.split() if p]
         if not parts:
@@ -192,6 +211,7 @@ class File(db.Model):
     user_id       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     uploaded_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_encrypted  = db.Column(db.Boolean, default=False)
+    file_hash     = db.Column(db.String(64), nullable=True)  # SHA-256 of original data
 
     shares = db.relationship('FileShare', backref='file', lazy=True,
                              foreign_keys='FileShare.file_id',
@@ -521,6 +541,23 @@ def auth_login():
         else:
             flash(f'Invalid email or password. {remaining} attempt(s) left before lockout.', 'danger')
 
+        # Log failed attempt and alert admins if threshold reached
+        log_activity('login_fail', f'Failed login for {email} from {request.remote_addr}')
+        db.session.commit()
+        recent_fails = ActivityLog.query.filter(
+            ActivityLog.action == 'login_fail',
+            ActivityLog.ip_address == request.remote_addr,
+            ActivityLog.created_at > datetime.now(timezone.utc) - timedelta(minutes=10)
+        ).count()
+        if recent_fails >= 5:
+            socketio.emit('security_alert', {
+                'message': f'{recent_fails} failed login attempts from IP {request.remote_addr}',
+                'ip': request.remote_addr,
+                'email': email,
+                'timestamp': datetime.now(timezone.utc).strftime('%H:%M:%S'),
+                'level': 'danger',
+            })
+
     return render_template('auth/login.html')
 
 
@@ -549,7 +586,9 @@ def auth_register():
             flash('An account with that email already exists.', 'danger')
         else:
             is_first = User.query.count() == 0
-            user = User(full_name=full_name, email=email, is_admin=is_first)
+            user = User(full_name=full_name, email=email,
+                        is_admin=is_first,
+                        role='super_admin' if is_first else 'user')
             user.set_password(password)
             db.session.add(user)
             db.session.flush()
@@ -912,6 +951,7 @@ def upload_file():
     stored_name   = f'{uuid.uuid4().hex}.{ext}' if ext else uuid.uuid4().hex
     save_path     = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
     raw_data      = f.read()
+    sha256_hash   = hashlib.sha256(raw_data).hexdigest()
     if fernet:
         disk_data = fernet.encrypt(raw_data)
     else:
@@ -924,7 +964,7 @@ def upload_file():
     try:
         rec = File(original_name=original_name, stored_name=stored_name,
                    size=size, mimetype=mime, user_id=current_user.id,
-                   is_encrypted=fernet is not None)
+                   is_encrypted=fernet is not None, file_hash=sha256_hash)
         db.session.add(rec)
         log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)})')
         db.session.commit()
@@ -1180,9 +1220,61 @@ def toggle_admin(user_id):
         return redirect(url_for('admin_panel'))
     user = db.session.get(User, user_id) or abort(404)
     user.is_admin = not user.is_admin
+    user.role = 'super_admin' if user.is_admin else 'user'
     db.session.commit()
     flash(f'Admin {"granted to" if user.is_admin else "revoked from"} {user.full_name}.', 'success')
     return redirect(url_for('admin_panel'))
+
+
+@app.route('/admin/change-role/<int:user_id>', methods=['POST'])
+@login_required
+def change_role(user_id):
+    if not current_user.is_super_admin:
+        abort(403)
+    if user_id == current_user.id:
+        flash("You can't change your own role.", 'warning')
+        return redirect(url_for('admin_panel'))
+    user = db.session.get(User, user_id) or abort(404)
+    new_role = request.form.get('role', 'user')
+    if new_role not in ('super_admin', 'analyst', 'auditor', 'user'):
+        flash('Invalid role.', 'danger')
+        return redirect(url_for('admin_panel'))
+    user.role = new_role
+    user.is_admin = new_role == 'super_admin'
+    db.session.commit()
+    log_activity('profile', f'Changed role of {user.full_name} to {new_role}')
+    db.session.commit()
+    flash(f'Role of {user.full_name} changed to {new_role.replace("_", " ").title()}.', 'success')
+    return redirect(url_for('admin_panel'))
+
+
+@app.route('/verify/<file_uuid>')
+@login_required
+def verify_file(file_uuid):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
+        abort(403)
+    if not rec.file_hash:
+        return jsonify(intact=None, error='No hash stored for this file (uploaded before integrity feature was added).')
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+    try:
+        with open(file_path, 'rb') as fh:
+            disk_data = fh.read()
+        raw_data = fernet.decrypt(disk_data) if (rec.is_encrypted and fernet) else disk_data
+    except Exception:
+        return jsonify(intact=False, error='Could not read file from disk.')
+    current_hash = hashlib.sha256(raw_data).hexdigest()
+    intact = current_hash == rec.file_hash
+    if not intact:
+        log_activity('integrity_fail', f'Hash mismatch for "{rec.original_name}" — possible tampering!')
+        db.session.commit()
+        socketio.emit('security_alert', {
+            'message': f'File integrity FAILED for "{rec.original_name}" (user: {current_user.full_name})',
+            'ip': request.remote_addr,
+            'timestamp': datetime.now(timezone.utc).strftime('%H:%M:%S'),
+            'level': 'danger',
+        })
+    return jsonify(intact=intact, stored_hash=rec.file_hash, current_hash=current_hash)
 
 
 @app.route('/admin/delete-user/<int:user_id>', methods=['POST'])
@@ -1451,9 +1543,22 @@ with app.app_context():
         _run_migrations()
     except Exception:
         db.create_all()
-    # Add webauthn_type column to existing databases that predate this field
+    # Add columns that predate the current schema (safe to run repeatedly)
+    for _stmt in [
+        "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
+        "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
+        "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
+    ]:
+        try:
+            db.session.execute(db.text(_stmt))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    # Migrate existing admins to super_admin role
     try:
-        db.session.execute(db.text('ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)'))
+        db.session.execute(db.text(
+            "UPDATE users SET role='super_admin' WHERE is_admin=1 AND (role IS NULL OR role='user')"
+        ))
         db.session.commit()
     except Exception:
         db.session.rollback()

@@ -257,6 +257,14 @@
             </button>
             {% endif %}
 
+            <!-- Verify integrity -->
+            {% if file.file_hash %}
+            <button class="btn btn-sm btn-outline-info flex-fill verify-btn" title="Verify File Integrity"
+                    onclick="verifyIntegrity('{{ file.uuid }}', this)">
+              <i class="bi bi-shield-check"></i>
+            </button>
+            {% endif %}
+
             {% if file.user_id == current_user.id %}
 
             <!-- Rename -->
@@ -493,6 +501,27 @@
             <i class="bi bi-link-45deg me-1"></i>Generate link
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Session timeout modal ── -->
+<div class="modal fade" id="sessionTimeoutModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2 text-warning"></i>Session Expiring</h6>
+      </div>
+      <div class="modal-body text-center py-3">
+        <p class="text-muted small mb-2">Your session will expire in</p>
+        <div id="timeoutCountdown">120</div>
+        <p class="text-muted small mt-2 mb-0">seconds due to inactivity.</p>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-primary w-100" id="stayLoggedIn">
+          <i class="bi bi-shield-check me-1"></i>Stay Logged In
+        </button>
       </div>
     </div>
   </div>
@@ -791,6 +820,89 @@ async function deleteLink() {
   bootstrap.Modal.getInstance(document.getElementById('linkModal')).hide();
   showToast('Public link revoked.', 'info');
 }
+
+// ── SHA-256 File Integrity Verification ────────────────────
+async function verifyIntegrity(fileUuid, btn) {
+  btn.disabled = true;
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const r = await fetch(`/verify/${fileUuid}`, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    const data = await r.json();
+    if (data.intact === null) {
+      btn.innerHTML = '<i class="bi bi-shield-slash"></i>';
+      btn.title = data.error || 'No hash stored for this file.';
+    } else if (data.intact) {
+      btn.innerHTML = '<i class="bi bi-shield-check integrity-ok"></i>';
+      btn.title = 'Integrity verified — file is unmodified ✓';
+      btn.classList.replace('btn-outline-info', 'btn-outline-success');
+    } else {
+      btn.innerHTML = '<i class="bi bi-shield-exclamation integrity-fail"></i>';
+      btn.title = '⚠ WARNING: File hash mismatch — possible tampering!';
+      btn.classList.replace('btn-outline-info', 'btn-outline-danger');
+      alert('⚠ Integrity check FAILED!\n\nThis file\'s hash does not match what was stored on upload. It may have been tampered with.');
+    }
+    btn.disabled = false;
+    setTimeout(() => {
+      btn.innerHTML = origHtml;
+      btn.classList.replace('btn-outline-success', 'btn-outline-info');
+      btn.classList.replace('btn-outline-danger', 'btn-outline-info');
+      btn.title = 'Verify File Integrity';
+    }, 6000);
+  } catch {
+    btn.innerHTML = origHtml;
+    btn.disabled = false;
+  }
+}
+
+// ── Security alert listener ────────────────────────────────
+socket.on('security_alert', data => {
+  const div = document.createElement('div');
+  div.className = 'alert alert-danger alert-dismissible fade show security-alert-toast';
+  div.innerHTML = `<i class="bi bi-shield-exclamation-fill me-2"></i>
+    <strong>Security Alert!</strong> ${data.message}
+    <br><small class="opacity-75">IP: ${data.ip} &nbsp;·&nbsp; ${data.timestamp}</small>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 12000);
+});
+
+// ── Session auto-timeout ────────────────────────────────────
+const _IDLE_MS    = 15 * 60 * 1000;  // 15 min total
+const _WARN_MS    = 2  * 60 * 1000;  // warn 2 min before
+let _idleTimer, _warnTimer, _countdownInterval;
+const _timeoutModal = new bootstrap.Modal(document.getElementById('sessionTimeoutModal'));
+
+function _resetIdle() {
+  clearTimeout(_idleTimer);
+  clearTimeout(_warnTimer);
+  clearInterval(_countdownInterval);
+  _warnTimer = setTimeout(_showTimeoutWarning, _IDLE_MS - _WARN_MS);
+  _idleTimer = setTimeout(() => { window.location.href = '/auth/logout'; }, _IDLE_MS);
+}
+
+function _showTimeoutWarning() {
+  let secs = Math.round(_WARN_MS / 1000);
+  document.getElementById('timeoutCountdown').textContent = secs;
+  _timeoutModal.show();
+  _countdownInterval = setInterval(() => {
+    secs--;
+    document.getElementById('timeoutCountdown').textContent = secs;
+    if (secs <= 0) { clearInterval(_countdownInterval); window.location.href = '/auth/logout'; }
+  }, 1000);
+}
+
+document.getElementById('stayLoggedIn')?.addEventListener('click', () => {
+  clearInterval(_countdownInterval);
+  _timeoutModal.hide();
+  _resetIdle();
+});
+
+['mousemove','keydown','click','scroll','touchstart'].forEach(ev =>
+  document.addEventListener(ev, _resetIdle, { passive: true }));
+_resetIdle();
 </script>
 {% endblock %}
 
