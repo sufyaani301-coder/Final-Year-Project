@@ -47,6 +47,9 @@
         <i class="bi bi-list fs-4"></i>
       </button>
       <h5 class="flex-grow-1 mb-0">Activity Log</h5>
+      <a href="{{ url_for('export_activity_csv') }}" class="btn btn-sm btn-outline-success">
+        <i class="bi bi-download me-1"></i>Export CSV
+      </a>
       <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-arrow-left me-1"></i>Back
       </a>

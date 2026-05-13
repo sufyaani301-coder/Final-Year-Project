@@ -162,6 +162,116 @@
         </div>
       </div>
 
+      <!-- ── Analytics charts ── -->
+      {% if section == 'my_files' or not section %}
+      {% if type_breakdown or week_counts %}
+      <div class="row g-3 mb-4">
+        <!-- Upload activity (7 days) -->
+        <div class="col-md-8">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-bar-chart-line me-1"></i>Upload Activity — Last 7 Days</div>
+            <canvas id="weekChart" height="90"></canvas>
+          </div>
+        </div>
+        <!-- File type breakdown -->
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>Storage Breakdown</div>
+            {% if type_breakdown %}
+            <canvas id="typeChart" height="140"></canvas>
+            {% else %}
+            <div class="empty-state text-center py-4"><i class="bi bi-pie-chart fs-2 d-block mb-2"></i>No files yet</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <script>
+      (function() {
+        const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+        const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+        const labelColor = () => isDark() ? '#9ca3af' : '#6b7280';
+        const BLUE_PALETTE = ['#2563eb','#3b82f6','#60a5fa','#93c5fd','#bfdbfe','#374151','#6b7280'];
+
+        // Upload activity bar chart
+        const wCtx = document.getElementById('weekChart')?.getContext('2d');
+        if (wCtx) {
+          const weekChart = new Chart(wCtx, {
+            type: 'bar',
+            data: {
+              labels: {{ week_labels | tojson }},
+              datasets: [{
+                label: 'Uploads',
+                data: {{ week_counts | tojson }},
+                backgroundColor: 'rgba(37,99,235,.7)',
+                borderColor: '#2563eb',
+                borderWidth: 1,
+                borderRadius: 6,
+              }]
+            },
+            options: {
+              responsive: true,
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { grid: { color: gridColor() }, ticks: { color: labelColor() } },
+                y: { beginAtZero: true, precision: 0, grid: { color: gridColor() }, ticks: { color: labelColor() } }
+              }
+            }
+          });
+          document.querySelector('.theme-toggle')?.addEventListener('click', () => {
+            setTimeout(() => {
+              weekChart.options.scales.x.grid.color = gridColor();
+              weekChart.options.scales.x.ticks.color = labelColor();
+              weekChart.options.scales.y.grid.color = gridColor();
+              weekChart.options.scales.y.ticks.color = labelColor();
+              weekChart.update();
+            }, 50);
+          });
+        }
+
+        // File type doughnut chart
+        const tCtx = document.getElementById('typeChart')?.getContext('2d');
+        if (tCtx) {
+          const breakdown = {{ type_breakdown | tojson }};
+          new Chart(tCtx, {
+            type: 'doughnut',
+            data: {
+              labels: Object.keys(breakdown),
+              datasets: [{
+                data: Object.values(breakdown),
+                backgroundColor: BLUE_PALETTE,
+                borderWidth: 2,
+                borderColor: isDark() ? '#1f2937' : '#ffffff',
+              }]
+            },
+            options: {
+              responsive: true,
+              cutout: '62%',
+              plugins: {
+                legend: {
+                  position: 'bottom',
+                  labels: { color: labelColor(), font: { size: 11 }, boxWidth: 12, padding: 10 }
+                },
+                tooltip: {
+                  callbacks: {
+                    label: ctx => {
+                      const bytes = ctx.parsed;
+                      const sizes = ['B','KB','MB','GB'];
+                      let i = 0; let b = bytes;
+                      while (b >= 1024 && i < sizes.length-1) { b /= 1024; i++; }
+                      return ` ${ctx.label}: ${b.toFixed(1)} ${sizes[i]}`;
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      })();
+      </script>
+      {% endif %}
+      {% endif %}
+
       <!-- Section heading + sort/filter toolbar -->
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
         <h6 class="fw-bold mb-0">
@@ -212,12 +322,35 @@
         </div>
       </div>
 
+      <!-- Bulk select toolbar (hidden until files selected) -->
+      {% if section == 'my_files' or not section %}
+      <div id="bulkBar" class="d-none align-items-center gap-2 mb-3 p-2 rounded-3 border"
+           style="background:var(--surface);border-color:var(--brand)!important">
+        <input type="checkbox" id="selectAll" class="form-check-input mt-0" title="Select all">
+        <span class="small fw-semibold text-muted ms-1"><span id="selCount">0</span> selected</span>
+        <div class="ms-auto d-flex gap-2">
+          <button class="btn btn-sm btn-outline-primary" onclick="bulkDownload()" id="btnBulkDl" disabled>
+            <i class="bi bi-file-zip me-1"></i>Download ZIP
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="bulkDelete()" id="btnBulkDel" disabled>
+            <i class="bi bi-trash me-1"></i>Delete selected
+          </button>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- File list -->
       {% set files = own_files if own_files else shared_files %}
       {% if files %}
       <div class="file-grid">
         {% for file in files %}
         <div class="file-card" id="file-{{ file.uuid }}">
+          <!-- Checkbox (own files only) -->
+          {% if file.user_id == current_user.id %}
+          <input type="checkbox" class="file-checkbox position-absolute m-2"
+                 style="z-index:10;top:0;left:0;width:16px;height:16px;cursor:pointer"
+                 data-uuid="{{ file.uuid }}" onclick="event.stopPropagation(); updateBulkBar()">
+          {% endif %}
           <!-- Thumbnail / icon -->
           <div class="file-thumb">
             {% if file.is_image %}
@@ -797,8 +930,7 @@ async function doDecrypt() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = fname;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
+    document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
   } else {
@@ -880,7 +1012,7 @@ function _resetIdle() {
   clearTimeout(_warnTimer);
   clearInterval(_countdownInterval);
   _warnTimer = setTimeout(_showTimeoutWarning, _IDLE_MS - _WARN_MS);
-  _idleTimer = setTimeout(() => { window.location.href = '/auth/logout'; }, _IDLE_MS);
+  _idleTimer = setTimeout(() => { globalThis.location.href = '/auth/logout'; }, _IDLE_MS);
 }
 
 function _showTimeoutWarning() {
@@ -890,7 +1022,7 @@ function _showTimeoutWarning() {
   _countdownInterval = setInterval(() => {
     secs--;
     document.getElementById('timeoutCountdown').textContent = secs;
-    if (secs <= 0) { clearInterval(_countdownInterval); window.location.href = '/auth/logout'; }
+    if (secs <= 0) { clearInterval(_countdownInterval); globalThis.location.href = '/auth/logout'; }
   }, 1000);
 }
 
@@ -903,6 +1035,66 @@ document.getElementById('stayLoggedIn')?.addEventListener('click', () => {
 ['mousemove','keydown','click','scroll','touchstart'].forEach(ev =>
   document.addEventListener(ev, _resetIdle, { passive: true }));
 _resetIdle();
+
+// ── Bulk file actions ──────────────────────────────────────
+function _selectedUuids() {
+  return [...document.querySelectorAll('.file-checkbox:checked')].map(cb => cb.dataset.uuid);
+}
+
+function updateBulkBar() {
+  const bar   = document.getElementById('bulkBar');
+  const count = _selectedUuids().length;
+  if (!bar) return;
+  if (count > 0) {
+    bar.classList.remove('d-none');
+    bar.classList.add('d-flex');
+  } else {
+    bar.classList.add('d-none');
+    bar.classList.remove('d-flex');
+  }
+  document.getElementById('selCount').textContent = count;
+  document.getElementById('btnBulkDl').disabled  = count === 0;
+  document.getElementById('btnBulkDel').disabled = count === 0;
+}
+
+document.getElementById('selectAll')?.addEventListener('change', function () {
+  document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = this.checked);
+  updateBulkBar();
+});
+
+async function bulkDelete() {
+  const uuids = _selectedUuids();
+  if (!uuids.length) return;
+  if (!confirm(`Delete ${uuids.length} file(s)? This cannot be undone.`)) return;
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  uuids.forEach(u => form.append('uuids', u));
+  const r = await fetch('/bulk-delete', { method: 'POST', body: form });
+  const data = await r.json();
+  if (data.success) {
+    uuids.forEach(u => {
+      const card = document.getElementById(`file-${u}`);
+      if (card) { card.classList.add('deleting'); setTimeout(() => card.remove(), 350); }
+    });
+    updateBulkBar();
+  }
+}
+
+async function bulkDownload() {
+  const uuids = _selectedUuids();
+  if (!uuids.length) return;
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  uuids.forEach(u => form.append('uuids', u));
+  const r    = await fetch('/bulk-download', { method: 'POST', body: form });
+  const blob = await r.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = r.headers.get('Content-Disposition')?.match(/filename=(.+)/)?.[1] || 'files.zip';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
 </script>
 {% endblock %}
 

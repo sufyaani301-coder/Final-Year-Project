@@ -54,6 +54,8 @@ from webauthn.helpers.structs import (
 )
 import json as _json
 import hashlib
+import csv
+import zipfile
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -1174,6 +1176,76 @@ def activity_log():
     return render_template('activity.html', logs=logs,
                            action_filter=action_filter,
                            action_icons=ACTION_ICONS)
+
+
+@app.route('/activity/export')
+@login_required
+def export_activity_csv():
+    q = ActivityLog.query if current_user.is_admin else \
+        ActivityLog.query.filter_by(user_id=current_user.id)
+    all_logs = q.order_by(ActivityLog.created_at.desc()).all()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['Date', 'User', 'Email', 'Action', 'Details', 'IP Address'])
+    for entry in all_logs:
+        writer.writerow([
+            entry.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            entry.user.full_name if entry.user else 'Unknown',
+            entry.user.email     if entry.user else '',
+            entry.action,
+            entry.detail,
+            entry.ip_address or '',
+        ])
+    output = io.BytesIO(buf.getvalue().encode('utf-8-sig'))
+    fname = f'filevault_logs_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.csv'
+    return send_file(output, mimetype='text/csv', as_attachment=True, download_name=fname)
+
+
+@app.route('/bulk-delete', methods=['POST'])
+@login_required
+def bulk_delete():
+    uuids = request.form.getlist('uuids')
+    deleted = 0
+    for uid in uuids:
+        rec = File.query.filter_by(uuid=uid, user_id=current_user.id).first()
+        if rec:
+            disk = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+            if os.path.exists(disk):
+                os.remove(disk)
+            name = rec.original_name
+            db.session.delete(rec)
+            log_activity('delete', f'Bulk deleted "{name}"')
+            deleted += 1
+    db.session.commit()
+    return jsonify(success=True, deleted=deleted)
+
+
+@app.route('/bulk-download', methods=['POST'])
+@login_required
+def bulk_download():
+    uuids = request.form.getlist('uuids')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for uid in uuids:
+            rec = File.query.filter_by(uuid=uid, user_id=current_user.id).first()
+            if not rec:
+                continue
+            path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+            if not os.path.exists(path):
+                continue
+            with open(path, 'rb') as fh:
+                raw = fh.read()
+            if rec.is_encrypted and fernet:
+                try:
+                    raw = fernet.decrypt(raw)
+                except Exception:
+                    pass
+            zf.writestr(rec.original_name, raw)
+    buf.seek(0)
+    log_activity('download', f'Bulk downloaded {len(uuids)} file(s) as ZIP')
+    db.session.commit()
+    fname = f'filevault_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.zip'
+    return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=fname)
 
 
 # ---------------------------------------------------------------------------
