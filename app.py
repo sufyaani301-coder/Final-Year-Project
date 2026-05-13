@@ -1445,7 +1445,12 @@ def on_disconnect():
 # Bootstrap & run
 # ---------------------------------------------------------------------------
 with app.app_context():
-    db.create_all()
+    # Run migrations automatically so no manual "flask db upgrade" is needed on Render
+    try:
+        from flask_migrate import upgrade as _run_migrations
+        _run_migrations()
+    except Exception:
+        db.create_all()
     # Add webauthn_type column to existing databases that predate this field
     try:
         db.session.execute(db.text('ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)'))
