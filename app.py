@@ -74,6 +74,12 @@ if _db_url.startswith('postgres://'):          # Render gives postgres://, SQLAl
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'pool_size': 5,
+    'max_overflow': 0,
+}
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'vault_uploads')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024    # 50 MB
 app.config['STORAGE_QUOTA_BYTES'] = 500 * 1024 * 1024  # 500 MB per user
