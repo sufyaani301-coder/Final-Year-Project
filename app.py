@@ -79,7 +79,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024    # 50 MB
 app.config['STORAGE_QUOTA_BYTES'] = 500 * 1024 * 1024  # 500 MB per user
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV', 'development') == 'production'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600
 app.config['SESSION_PERMANENT'] = False          # session dies when browser closes
 app.config['REMEMBER_COOKIE_DURATION'] = 0       # no "remember me" persistence
