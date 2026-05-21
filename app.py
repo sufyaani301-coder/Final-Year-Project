@@ -1614,32 +1614,38 @@ def on_disconnect():
 # ---------------------------------------------------------------------------
 # Bootstrap & run
 # ---------------------------------------------------------------------------
-with app.app_context():
-    # Run migrations automatically so no manual "flask db upgrade" is needed on Render
-    try:
-        from flask_migrate import upgrade as _run_migrations
-        _run_migrations()
-    except Exception:
-        db.create_all()
-    # Add columns that predate the current schema (safe to run repeatedly)
-    for _stmt in [
-        "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
-        "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
-        "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
-    ]:
+try:
+    with app.app_context():
+        # Run migrations automatically so no manual "flask db upgrade" is needed
         try:
-            db.session.execute(db.text(_stmt))
+            from flask_migrate import upgrade as _run_migrations
+            _run_migrations()
+        except Exception:
+            try:
+                db.create_all()
+            except Exception:
+                pass
+        # Add columns that predate the current schema (safe to run repeatedly)
+        for _stmt in [
+            "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
+            "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
+            "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
+        ]:
+            try:
+                db.session.execute(db.text(_stmt))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        # Migrate existing admins to super_admin role
+        try:
+            db.session.execute(db.text(
+                "UPDATE users SET role='super_admin' WHERE is_admin IS TRUE AND (role IS NULL OR role='user')"
+            ))
             db.session.commit()
         except Exception:
             db.session.rollback()
-    # Migrate existing admins to super_admin role
-    try:
-        db.session.execute(db.text(
-            "UPDATE users SET role='super_admin' WHERE is_admin=1 AND (role IS NULL OR role='user')"
-        ))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
+except Exception:
+    pass
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV', 'production') == 'development'
