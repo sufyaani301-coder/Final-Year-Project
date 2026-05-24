@@ -471,10 +471,14 @@ def _send_verification_email(user):
         f'Click here to verify your email address:\n{link}\n\n'
         f'If you did not register for FileVault, ignore this email.'
     )
-    try:
-        mail.send(msg)
-    except Exception as exc:
-        app.logger.error('Verification email failed for %s: %s', user.email, exc)
+    import threading
+    def _send():
+        with app.app_context():
+            try:
+                mail.send(msg)
+            except Exception as exc:
+                app.logger.error('Verification email failed for %s: %s', user.email, exc)
+    threading.Thread(target=_send, daemon=True).start()
 
 
 
