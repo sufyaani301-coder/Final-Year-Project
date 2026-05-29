@@ -431,7 +431,7 @@
 
             <!-- Public link -->
             <button class="btn btn-sm btn-outline-info flex-fill" title="Copy public link"
-                    onclick="openLinkModal('{{ file.uuid }}', {{ file.share_tokens | length }}, '{{ file.share_tokens[0].token if file.share_tokens else '' }}', '{{ request.host_url }}shared/{{ file.share_tokens[0].token if file.share_tokens else '' }}')">
+                    onclick="openLinkModal('{{ file.uuid }}', {{ file.share_tokens | length }}, '{{ file.share_tokens[0].token if file.share_tokens else '' }}')">
               <i class="bi bi-link-45deg"></i>
             </button>
 
@@ -862,11 +862,13 @@ function doRename(fileUuid, url) {
 let _currentFileUuid = null;
 let _currentToken    = null;
 
-function openLinkModal(fileUuid, hasTokens, existingToken, existingUrl) {
+function openLinkModal(fileUuid, hasTokens, existingToken) {
   _currentFileUuid = fileUuid;
   _currentToken    = existingToken || null;
-  if (hasTokens && existingToken && existingUrl) {
-    document.getElementById('linkUrl').value = existingUrl;
+  if (hasTokens && existingToken) {
+    // Build URL client-side so it always matches the real route (/s/<token>)
+    const url = window.location.origin + '/s/' + existingToken;
+    document.getElementById('linkUrl').value = url;
     document.getElementById('linkExisting').classList.remove('d-none');
     document.getElementById('linkCreate').classList.add('d-none');
   } else {
@@ -897,31 +899,37 @@ async function createLink() {
 }
 
 function copyLink() {
-  const text = document.getElementById('linkUrl').value;
-  const icon = document.getElementById('linkCopyIcon');
+  const input = document.getElementById('linkUrl');
+  const text  = input.value;
+  const icon  = document.getElementById('linkCopyIcon');
 
-  // Synchronous execCommand inside a <textarea> — works on iOS Safari
-  // within the same user-gesture tick (async clipboard API fails in modals on iOS).
-  const tmp = document.createElement('textarea');
-  tmp.value = text;
-  tmp.setAttribute('readonly', '');
-  tmp.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
-  document.body.appendChild(tmp);
-  tmp.focus();
-  tmp.select();
-  tmp.setSelectionRange(0, text.length);   // required on iOS
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (_) {}
-  document.body.removeChild(tmp);
-
-  // Modern clipboard API as a fallback for browsers that block execCommand
-  if (!ok && navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(() => {});
+  function markCopied() {
+    icon.className = 'bi bi-check2 text-success';
+    setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 2500);
+    showToast('Link copied to clipboard!', 'success');
   }
 
-  icon.className = 'bi bi-check2 text-success';
-  setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 2000);
-  showToast('Link copied to clipboard!', 'success');
+  // Preferred: modern async clipboard API (works on HTTPS incl. Railway + iOS 13.4+)
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(markCopied).catch(() => legacyCopy());
+    return;
+  }
+  legacyCopy();
+
+  function legacyCopy() {
+    // Temporarily remove readonly so iOS can select the text
+    const wasReadonly = input.hasAttribute('readonly');
+    input.removeAttribute('readonly');
+    input.focus();
+    input.select();
+    input.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) {}
+    if (wasReadonly) input.setAttribute('readonly', '');
+    if (ok) { markCopied(); return; }
+    // Last resort: leave text selected and tell user to copy manually
+    showToast('Long-press the link and choose Copy.', 'warning');
+  }
 }
 
 // ── Decrypt & Download ──
