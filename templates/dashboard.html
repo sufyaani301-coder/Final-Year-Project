@@ -893,6 +893,7 @@ function copyLink() {
   }
   icon.className = 'bi bi-check2';
   setTimeout(() => icon.className = 'bi bi-clipboard', 2000);
+  showToast('<i class="bi bi-clipboard-check me-2"></i>Link copied to clipboard!', 'success');
 }
 
 // ── Decrypt & Download ──

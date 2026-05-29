@@ -54,6 +54,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Global toast notification
+function showToast(message, type = 'success') {
+  const container = document.querySelector('.toast-container') || (() => {
+    const c = document.createElement('div');
+    c.className = 'toast-container position-fixed top-0 end-0 p-3';
+    c.style.zIndex = 9999;
+    document.body.appendChild(c);
+    return c;
+  })();
+  const el = document.createElement('div');
+  el.className = `toast align-items-center text-bg-${type} border-0 show mb-2`;
+  el.innerHTML = `<div class="d-flex"><div class="toast-body fw-semibold">${message}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
 // AJAX delete helper (used by dashboard)
 async function ajaxDelete(url, cardEl) {
   if (!confirm('Delete this file?')) return;
