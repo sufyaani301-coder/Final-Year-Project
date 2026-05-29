@@ -84,32 +84,79 @@
     <div class="p-4 flex-grow-1 overflow-auto">
       <div class="container-fluid">
 
+        <!-- ── Dual-section tabs (admin only) ── -->
+        {% if current_user.is_admin %}
+        <ul class="nav nav-tabs mb-4">
+          <li class="nav-item">
+            <a class="nav-link {% if section == 'all' %}active{% endif %} fw-semibold"
+               href="{{ url_for('activity_log', section='all') }}">
+              <i class="bi bi-people me-1"></i>All Users
+              <span class="badge bg-secondary ms-1">Admin</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if section == 'mine' %}active{% endif %} fw-semibold"
+               href="{{ url_for('activity_log', section='mine') }}">
+              <i class="bi bi-person me-1"></i>My Activity
+            </a>
+          </li>
+        </ul>
+        {% endif %}
+
+        <!-- Section heading -->
+        <div class="d-flex align-items-center mb-3 gap-2">
+          {% if current_user.is_admin and section == 'all' %}
+            <i class="bi bi-people-fill text-primary fs-5"></i>
+            <h6 class="mb-0 fw-bold">All Users Activity</h6>
+            <span class="badge bg-primary ms-1">{{ logs.total }} records</span>
+          {% else %}
+            <i class="bi bi-person-fill text-success fs-5"></i>
+            <h6 class="mb-0 fw-bold">My Activity</h6>
+            <span class="badge bg-success ms-1">{{ logs.total }} records</span>
+          {% endif %}
+        </div>
+
         <!-- Filters -->
-        <div class="row mb-4">
-          <div class="col-12">
-            <div class="card">
-              <div class="card-body">
-                <form method="GET" class="row g-2 align-items-end">
-                  <div class="col-auto">
-                    <label class="form-label" for="actionFilter">Filter by Action</label>
-                    <select id="actionFilter" name="action" class="form-select">
-                      <option value="">All Actions</option>
-                      {% for key, (icon, color) in action_icons.items() %}
-                      <option value="{{ key }}" {% if action_filter == key %}selected{% endif %}>
-                        {{ key.capitalize() }}
-                      </option>
-                      {% endfor %}
-                    </select>
-                  </div>
-                  <div class="col-auto">
-                    <button type="submit" class="btn btn-primary">Filter</button>
-                    {% if action_filter %}
-                    <a href="{{ url_for('activity_log') }}" class="btn btn-outline-secondary">Clear</a>
-                    {% endif %}
-                  </div>
-                </form>
+        <div class="card mb-4">
+          <div class="card-body py-3">
+            <form method="GET" class="row g-2 align-items-end">
+              <input type="hidden" name="section" value="{{ section }}"/>
+
+              <!-- Action filter -->
+              <div class="col-auto">
+                <label class="form-label small fw-semibold mb-1" for="actionFilter">Action</label>
+                <select id="actionFilter" name="action" class="form-select form-select-sm">
+                  <option value="">All Actions</option>
+                  {% for key, (icon, color) in action_icons.items() %}
+                  <option value="{{ key }}" {% if action_filter == key %}selected{% endif %}>
+                    {{ key.capitalize() }}
+                  </option>
+                  {% endfor %}
+                </select>
               </div>
-            </div>
+
+              <!-- User filter (admin + all-section only) -->
+              {% if current_user.is_admin and section == 'all' %}
+              <div class="col-auto">
+                <label class="form-label small fw-semibold mb-1" for="userFilter">User</label>
+                <select id="userFilter" name="user_id" class="form-select form-select-sm">
+                  <option value="">All Users</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}" {% if user_filter == u.id|string %}selected{% endif %}>
+                    {{ u.full_name }} ({{ u.email }})
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% endif %}
+
+              <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                {% if action_filter or user_filter %}
+                <a href="{{ url_for('activity_log', section=section) }}" class="btn btn-outline-secondary btn-sm">Clear</a>
+                {% endif %}
+              </div>
+            </form>
           </div>
         </div>
 
@@ -120,7 +167,7 @@
               <thead class="table-light">
                 <tr>
                   <th>Action</th>
-                  <th>User</th>
+                  {% if current_user.is_admin and section == 'all' %}<th>User</th>{% endif %}
                   <th>Details</th>
                   <th>IP Address</th>
                   <th>Date & Time</th>
@@ -133,23 +180,28 @@
                     {% if action_icons.get(item.action) %}
                       {% set icon, color = action_icons[item.action] %}
                       <i class="bi {{ icon }} {{ color }}"></i>
-                      <span class="ms-2">{{ item.action.capitalize() }}</span>
+                      <span class="ms-1">{{ item.action.capitalize() }}</span>
                     {% else %}
                       <span class="badge bg-secondary">{{ item.action }}</span>
                     {% endif %}
                   </td>
+                  {% if current_user.is_admin and section == 'all' %}
                   <td>
                     {% if item.user %}
                       <div class="d-flex align-items-center gap-2">
                         <div class="avatar-circle-sm">{{ item.user.initials }}</div>
-                        {{ item.user.full_name }}
+                        <div>
+                          <div class="small fw-semibold">{{ item.user.full_name }}</div>
+                          <div class="text-muted" style="font-size:.7rem">{{ item.user.email }}</div>
+                        </div>
                       </div>
                     {% else %}
                       <span class="text-muted">Unknown</span>
                     {% endif %}
                   </td>
+                  {% endif %}
                   <td>
-                    <span class="text-muted">{{ item.detail[:50] }}{% if item.detail|length > 50 %}…{% endif %}</span>
+                    <span class="text-muted">{{ item.detail[:60] }}{% if item.detail|length > 60 %}…{% endif %}</span>
                   </td>
                   <td>
                     <code class="text-muted small">{{ item.ip_address or '—' }}</code>
@@ -160,7 +212,9 @@
                 </tr>
                 {% else %}
                 <tr>
-                  <td colspan="5" class="text-center text-muted py-4">
+                  <td colspan="{% if current_user.is_admin and section == 'all' %}5{% else %}4{% endif %}"
+                      class="text-center text-muted py-5">
+                    <i class="bi bi-inbox fs-3 d-block mb-2 opacity-25"></i>
                     No activity records found.
                   </td>
                 </tr>
@@ -176,7 +230,7 @@
           <ul class="pagination justify-content-center">
             {% if logs.has_prev %}
             <li class="page-item">
-              <a class="page-link" href="{{ url_for('activity_log', page=logs.prev_num, action=action_filter) }}">
+              <a class="page-link" href="{{ url_for('activity_log', page=logs.prev_num, action=action_filter, user_id=user_filter, section=section) }}">
                 Previous
               </a>
             </li>
@@ -188,7 +242,7 @@
                 <li class="page-item active"><span class="page-link">{{ page_num }}</span></li>
                 {% else %}
                 <li class="page-item">
-                  <a class="page-link" href="{{ url_for('activity_log', page=page_num, action=action_filter) }}">
+                  <a class="page-link" href="{{ url_for('activity_log', page=page_num, action=action_filter, user_id=user_filter, section=section) }}">
                     {{ page_num }}
                   </a>
                 </li>
@@ -200,7 +254,7 @@
 
             {% if logs.has_next %}
             <li class="page-item">
-              <a class="page-link" href="{{ url_for('activity_log', page=logs.next_num, action=action_filter) }}">
+              <a class="page-link" href="{{ url_for('activity_log', page=logs.next_num, action=action_filter, user_id=user_filter, section=section) }}">
                 Next
               </a>
             </li>

@@ -1190,14 +1190,34 @@ def public_download_file(token_str):
 def activity_log():
     page          = request.args.get('page', 1, type=int)
     action_filter = request.args.get('action', '')
-    q = ActivityLog.query if current_user.is_admin else \
-        ActivityLog.query.filter_by(user_id=current_user.id)
+    user_filter   = request.args.get('user_id', '', type=str)
+    section       = request.args.get('section', 'all' if current_user.is_admin else 'mine')
+
+    if current_user.is_admin:
+        if section == 'mine':
+            q = ActivityLog.query.filter_by(user_id=current_user.id)
+        else:
+            q = ActivityLog.query
+            if user_filter:
+                try:
+                    q = q.filter_by(user_id=int(user_filter))
+                except ValueError:
+                    pass
+    else:
+        q = ActivityLog.query.filter_by(user_id=current_user.id)
+        section = 'mine'
+
     if action_filter:
         q = q.filter_by(action=action_filter)
-    logs = q.order_by(ActivityLog.created_at.desc()).paginate(page=page, per_page=25,
-                                                              error_out=False)
+
+    logs  = q.order_by(ActivityLog.created_at.desc()).paginate(page=page, per_page=25, error_out=False)
+    users = User.query.order_by(User.full_name).all() if current_user.is_admin else []
+
     return render_template('activity.html', logs=logs,
                            action_filter=action_filter,
+                           user_filter=user_filter,
+                           section=section,
+                           users=users,
                            action_icons=ACTION_ICONS)
 
 
