@@ -689,7 +689,7 @@
         <label class="form-label small fw-semibold" for="decryptPassword">Your password</label>
         <input type="password" class="form-control form-control-sm" id="decryptPassword"
                placeholder="Enter your password" autocomplete="current-password"/>
-        <div class="invalid-feedback" id="decryptError"></div>
+        <div class="text-danger small mt-1" id="decryptError" style="min-height:1.2em"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -897,18 +897,31 @@ async function createLink() {
 }
 
 function copyLink() {
-  const input = document.getElementById('linkUrl');
+  const text = document.getElementById('linkUrl').value;
   const icon = document.getElementById('linkCopyIcon');
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(input.value).catch(() => {
-      input.select(); document.execCommand('copy');
-    });
-  } else {
-    input.select(); document.execCommand('copy');
+
+  // Synchronous execCommand inside a <textarea> — works on iOS Safari
+  // within the same user-gesture tick (async clipboard API fails in modals on iOS).
+  const tmp = document.createElement('textarea');
+  tmp.value = text;
+  tmp.setAttribute('readonly', '');
+  tmp.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+  document.body.appendChild(tmp);
+  tmp.focus();
+  tmp.select();
+  tmp.setSelectionRange(0, text.length);   // required on iOS
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) {}
+  document.body.removeChild(tmp);
+
+  // Modern clipboard API as a fallback for browsers that block execCommand
+  if (!ok && navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {});
   }
-  icon.className = 'bi bi-check2';
-  setTimeout(() => icon.className = 'bi bi-clipboard', 2000);
-  showToast('<i class="bi bi-clipboard-check me-2"></i>Link copied to clipboard!', 'success');
+
+  icon.className = 'bi bi-check2 text-success';
+  setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 2000);
+  showToast('Link copied to clipboard!', 'success');
 }
 
 // ── Decrypt & Download ──
@@ -925,46 +938,70 @@ function openDecryptModal(fileUuid, fileName) {
   setTimeout(() => pw.focus(), 400);
 }
 
-async function doDecrypt() {
-  const pw = document.getElementById('decryptPassword');
+function _decryptShowError(msg) {
+  const pw    = document.getElementById('decryptPassword');
   const errEl = document.getElementById('decryptError');
+  pw.classList.add('is-invalid');
+  errEl.textContent = msg;
+  showToast(msg, 'danger');
+}
+
+async function doDecrypt() {
+  const pw    = document.getElementById('decryptPassword');
+  const errEl = document.getElementById('decryptError');
+  const btn   = document.getElementById('decryptBtn');
+
+  pw.classList.remove('is-invalid');
+  errEl.textContent = '';
+
   if (!pw.value) {
     pw.classList.add('is-invalid');
     errEl.textContent = 'Please enter your password.';
+    pw.focus();
     return;
   }
-  const btn = document.getElementById('decryptBtn');
+
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Decrypting…';
 
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  form.append('password', pw.value);
+  try {
+    const form = new FormData();
+    form.append('csrf_token', CSRF);
+    form.append('password', pw.value);
 
-  const r = await fetch(`/decrypt/${_decryptUuid}`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    body: form,
-  });
+    const r = await fetch(`/decrypt/${_decryptUuid}`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: form,
+    });
 
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
 
-  if (r.ok) {
-    const blob = await r.blob();
-    const cd = r.headers.get('Content-Disposition') || '';
-    const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-    const fname = match ? match[1].replace(/['"]/g, '') : 'decrypted_file';
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fname;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
-  } else {
-    const data = await r.json().catch(() => ({}));
-    pw.classList.add('is-invalid');
-    errEl.textContent = data.error || 'Decryption failed. Check your password.';
+    if (r.ok) {
+      const blob  = await r.blob();
+      const cd    = r.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      const fname = match ? match[1].replace(/['"]/g, '') : 'decrypted_file';
+      const url   = URL.createObjectURL(blob);
+      const a     = document.createElement('a');
+      a.href = url; a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
+      showToast('File decrypted and downloaded!', 'success');
+    } else {
+      let msg = 'Decryption failed. Please try again.';
+      try { const d = await r.json(); msg = d.error || msg; } catch (_) {}
+      // Special-case the most common Railway error so it's actionable
+      if (r.status === 404) msg = 'File not found on the server. Please re-upload the file and try again.';
+      if (r.status === 403 && msg.toLowerCase().includes('password')) msg = 'Incorrect password. Use your FileVault login password.';
+      _decryptShowError(msg);
+    }
+  } catch (_) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
+    _decryptShowError('Network error. Check your connection and try again.');
   }
 }
 
