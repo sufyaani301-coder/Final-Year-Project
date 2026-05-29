@@ -1028,13 +1028,18 @@ def decrypt_file(file_uuid):
         abort(403)
     password = request.form.get('password', '')
     if not current_user.check_password(password):
-        return jsonify(success=False, error='Incorrect password.'), 403
+        return jsonify(success=False, error='Incorrect password. Use your FileVault login password.'), 403
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
-    if rec.is_encrypted and fernet:
-        data = fernet.decrypt(open(file_path, 'rb').read())
-    else:
-        with open(file_path, 'rb') as fh:
-            data = fh.read()
+    if not os.path.exists(file_path):
+        return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
+    try:
+        if rec.is_encrypted and fernet:
+            data = fernet.decrypt(open(file_path, 'rb').read())
+        else:
+            with open(file_path, 'rb') as fh:
+                data = fh.read()
+    except Exception as exc:
+        return jsonify(success=False, error=f'Decryption error: {exc}'), 500
     log_activity('download', f'Decrypted & downloaded "{rec.original_name}"')
     db.session.commit()
     return send_file(io.BytesIO(data), as_attachment=True,

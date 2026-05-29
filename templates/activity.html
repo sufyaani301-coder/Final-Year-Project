@@ -16,6 +16,26 @@
           <i class="bi bi-folder2-open me-2"></i>My Files
         </a>
       </li>
+      <li class="nav-item">
+        <a href="{{ url_for('dashboard', section='shared_with_me') }}" class="nav-link sidebar-link">
+          <i class="bi bi-people me-2"></i>Shared with me
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="{{ url_for('dashboard', section='recent') }}" class="nav-link sidebar-link">
+          <i class="bi bi-clock-history me-2"></i>Recent
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="{{ url_for('activity_log') }}" class="nav-link sidebar-link active">
+          <i class="bi bi-activity me-2"></i>Activity
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="{{ url_for('profile') }}" class="nav-link sidebar-link">
+          <i class="bi bi-gear me-2"></i>Settings
+        </a>
+      </li>
       {% if current_user.is_admin %}
       <li class="nav-item mt-2">
         <hr class="sidebar-divider"/>
@@ -23,17 +43,22 @@
           <i class="bi bi-shield-check me-2"></i>Admin
         </a>
       </li>
+      <li class="nav-item">
+        <a href="{{ url_for('admin_panel') }}#users" class="nav-link sidebar-link">
+          <i class="bi bi-people-fill me-2"></i>View Users
+        </a>
+      </li>
       {% endif %}
     </ul>
 
     <div class="sidebar-footer p-3">
-      <div class="d-flex align-items-center gap-2">
-        <div class="avatar-circle-sm">{{ current_user.initials }}</div>
-        <div class="small lh-sm">
-          <div class="fw-semibold text-truncate" style="max-width:130px">{{ current_user.full_name }}</div>
+      <a href="{{ url_for('profile') }}" class="nav-link sidebar-link d-flex align-items-center gap-2 p-2 rounded">
+        <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
+        <div class="small lh-sm overflow-hidden">
+          <div class="fw-semibold text-truncate">{{ current_user.full_name }}</div>
           <div class="text-muted" style="font-size:.7rem">{{ current_user.email[:22] }}…</div>
         </div>
-      </div>
+      </a>
     </div>
   </nav>
   <div class="sidebar-overlay"></div>
@@ -190,10 +215,4 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-document.getElementById('sidebarToggle')?.addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('open');
-});
-</script>
 {% endblock %}
