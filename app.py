@@ -61,6 +61,8 @@ import zipfile
 # App setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 _secret = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
 if _secret == 'dev-key-change-in-production':
     import warnings
@@ -392,6 +394,12 @@ def format_bytes(size):
     return f'{size:.1f} TB'
 
 
+def _get_real_ip():
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr or ''
+
 def log_activity(action, detail='', user_id=None):
     uid = user_id if user_id is not None else (
         current_user.id if current_user.is_authenticated else None)
@@ -399,7 +407,7 @@ def log_activity(action, detail='', user_id=None):
         user_id=uid,
         action=action,
         detail=str(detail)[:500],
-        ip_address=request.remote_addr or '',
+        ip_address=_get_real_ip(),
     )
     db.session.add(entry)
 
@@ -539,7 +547,7 @@ def auth_login():
             _login_attempts.pop(email, None)
             login_user(user, remember=False)
             session['_logged_in_this_session'] = True
-            log_activity('login', f'Logged in from {request.remote_addr}')
+            log_activity('login', f'Logged in from {_get_real_ip()}')
             db.session.commit()
             flash(f'Welcome back, {user.full_name.split()[0]}!', 'success')
             nxt = request.args.get('next', '')
