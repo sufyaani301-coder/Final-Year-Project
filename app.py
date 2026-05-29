@@ -1661,6 +1661,17 @@ try:
             db.session.commit()
         except Exception:
             db.session.rollback()
+        # Grant admin to ADMIN_EMAIL if set (useful when first user is not admin)
+        _admin_email = os.environ.get('ADMIN_EMAIL', '').strip().lower()
+        if _admin_email:
+            try:
+                _admin_user = User.query.filter_by(email=_admin_email).first()
+                if _admin_user and not _admin_user.is_admin:
+                    _admin_user.is_admin = True
+                    _admin_user.role = 'super_admin'
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
 except Exception:
     pass
 
