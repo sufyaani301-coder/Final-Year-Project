@@ -30,6 +30,11 @@
           <i class="bi bi-clock-history me-2"></i>Recent
         </a>
       </li>
+      <li class="nav-item">
+        <a href="{{ url_for('activity_log') }}" class="nav-link sidebar-link">
+          <i class="bi bi-activity me-2"></i>Activity
+        </a>
+      </li>
       {% if current_user.is_admin %}
       <li class="nav-item mt-2">
         <hr class="sidebar-divider"/>
