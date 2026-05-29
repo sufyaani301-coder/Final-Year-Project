@@ -416,7 +416,7 @@
 
             <!-- Public link -->
             <button class="btn btn-sm btn-outline-info flex-fill" title="Copy public link"
-                    onclick="openLinkModal('{{ file.uuid }}', {{ file.share_tokens | length }})">
+                    onclick="openLinkModal('{{ file.uuid }}', {{ file.share_tokens | length }}, '{{ file.share_tokens[0].token if file.share_tokens else '' }}', '{{ request.host_url }}shared/{{ file.share_tokens[0].token if file.share_tokens else '' }}')">
               <i class="bi bi-link-45deg"></i>
             </button>
 
@@ -847,12 +847,17 @@ function doRename(fileUuid, url) {
 let _currentFileUuid = null;
 let _currentToken    = null;
 
-function openLinkModal(fileUuid, hasTokens) {
+function openLinkModal(fileUuid, hasTokens, existingToken, existingUrl) {
   _currentFileUuid = fileUuid;
-  _currentToken    = null;
-  document.getElementById('linkExisting').classList.add('d-none');
-  document.getElementById('linkCreate').classList.remove('d-none');
-  // If tokens exist, show first active one (page must reload to show — for simplicity show create)
+  _currentToken    = existingToken || null;
+  if (hasTokens && existingToken && existingUrl) {
+    document.getElementById('linkUrl').value = existingUrl;
+    document.getElementById('linkExisting').classList.remove('d-none');
+    document.getElementById('linkCreate').classList.add('d-none');
+  } else {
+    document.getElementById('linkExisting').classList.add('d-none');
+    document.getElementById('linkCreate').classList.remove('d-none');
+  }
   new bootstrap.Modal(document.getElementById('linkModal')).show();
 }
 
@@ -877,8 +882,15 @@ async function createLink() {
 }
 
 function copyLink() {
-  navigator.clipboard.writeText(document.getElementById('linkUrl').value);
+  const input = document.getElementById('linkUrl');
   const icon = document.getElementById('linkCopyIcon');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(input.value).catch(() => {
+      input.select(); document.execCommand('copy');
+    });
+  } else {
+    input.select(); document.execCommand('copy');
+  }
   icon.className = 'bi bi-check2';
   setTimeout(() => icon.className = 'bi bi-clipboard', 2000);
 }
