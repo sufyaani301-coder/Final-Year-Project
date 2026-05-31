@@ -44,3 +44,13 @@ Thumbs.db
 
 # Railway
 .railway/
+
+# Claude Code internal files
+.claude/
+
+# Local scripts & generated docs (not part of the app)
+generate_doc.py
+generate_doc2.py
+generate_dissertation.py
+FileVault_Dissertation.docx
+*.docx
