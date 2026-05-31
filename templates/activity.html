@@ -7,7 +7,7 @@
   <!-- Sidebar -->
   <nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
     <div class="sidebar-brand">
-      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+      <i class="bi bi-shield-lock-fill"></i><span>FileVault</span>
     </div>
 
     <ul class="nav flex-column mt-3 flex-grow-1">
@@ -51,13 +51,14 @@
       {% endif %}
     </ul>
 
-    <div class="sidebar-footer p-3">
-      <a href="{{ url_for('profile') }}" class="nav-link sidebar-link d-flex align-items-center gap-2 p-2 rounded">
+    <div class="sidebar-footer">
+      <a href="{{ url_for('profile') }}" class="sidebar-user-link">
         <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
-        <div class="small lh-sm overflow-hidden">
-          <div class="fw-semibold text-truncate">{{ current_user.full_name }}</div>
-          <div class="text-muted" style="font-size:.7rem">{{ current_user.email[:22] }}…</div>
+        <div class="lh-sm overflow-hidden flex-grow-1">
+          <div class="sidebar-user-name">{{ current_user.full_name }}</div>
+          <div class="sidebar-user-email">{{ current_user.email }}</div>
         </div>
+        <i class="bi bi-chevron-right" style="color:rgba(255,255,255,.25);font-size:.7rem;flex-shrink:0"></i>
       </a>
     </div>
   </nav>
@@ -71,7 +72,10 @@
       <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
         <i class="bi bi-list fs-4"></i>
       </button>
-      <h5 class="flex-grow-1 mb-0">Activity Log</h5>
+      <h5 class="flex-grow-1 mb-0 fw-bold" style="letter-spacing:-.02em">Activity Log</h5>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
+        <i class="bi bi-moon-fill"></i>
+      </button>
       <a href="{{ url_for('export_activity_csv') }}" class="btn btn-sm btn-outline-success">
         <i class="bi bi-download me-1"></i>Export CSV
       </a>

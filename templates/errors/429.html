@@ -2,15 +2,16 @@
 {% block title %}Too Many Requests — FileVault{% endblock %}
 
 {% block body %}
-<div class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
-  <div class="text-center">
-    <div class="display-1 fw-bold text-warning mb-3">
-      <i class="bi bi-shield-exclamation"></i>
+<div class="d-flex align-items-center justify-content-center min-vh-100" style="background:var(--bg)">
+  <div class="text-center px-4" style="max-width:460px">
+    <div style="font-size:5rem;font-weight:800;letter-spacing:-.04em;line-height:1;color:#f59e0b;opacity:.15;margin-bottom:.25rem">429</div>
+    <div class="mb-4" style="font-size:3rem;line-height:1">
+      <i class="bi bi-hourglass-split" style="color:#f59e0b"></i>
     </div>
-    <h1 class="h2 mb-3">Too Many Attempts</h1>
-    <p class="text-muted mb-4 fs-5">You have made too many requests. Please wait a moment and try again.</p>
-    <a href="{{ url_for('auth_login') }}" class="btn btn-primary">
-      <i class="bi bi-arrow-left me-2"></i>Back to Login
+    <h1 class="fw-bold mb-2" style="font-size:1.6rem;letter-spacing:-.02em;color:var(--text-primary)">Too many attempts</h1>
+    <p class="mb-5" style="color:var(--text-muted);line-height:1.65">You've made too many requests in a short time. Please wait a moment before trying again — this helps keep FileVault secure.</p>
+    <a href="{{ url_for('auth_login') }}" class="btn btn-primary fw-semibold px-4">
+      <i class="bi bi-arrow-left me-2"></i>Back to Sign In
     </a>
   </div>
 </div>

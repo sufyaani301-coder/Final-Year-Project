@@ -7,7 +7,7 @@
   <!-- ── Sidebar ── -->
   <nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
     <div class="sidebar-brand">
-      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+      <i class="bi bi-shield-lock-fill"></i><span>FileVault</span>
     </div>
 
     <ul class="nav flex-column mt-3 flex-grow-1">
@@ -55,13 +55,14 @@
       {% endif %}
     </ul>
 
-    <div class="sidebar-footer p-3">
-      <a href="{{ url_for('profile') }}" class="nav-link sidebar-link d-flex align-items-center gap-2 p-2 rounded">
+    <div class="sidebar-footer">
+      <a href="{{ url_for('profile') }}" class="sidebar-user-link">
         <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
-        <div class="small lh-sm overflow-hidden">
-          <div class="fw-semibold text-truncate">{{ current_user.full_name }}</div>
-          <div class="text-muted" style="font-size:.7rem">Profile &amp; Settings</div>
+        <div class="lh-sm overflow-hidden flex-grow-1">
+          <div class="sidebar-user-name">{{ current_user.full_name }}</div>
+          <div class="sidebar-user-email">{{ current_user.email }}</div>
         </div>
+        <i class="bi bi-chevron-right" style="color:rgba(255,255,255,.25);font-size:.7rem;flex-shrink:0"></i>
       </a>
     </div>
   </nav>
@@ -99,27 +100,37 @@
       <!-- Upload button -->
       <button class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0"
               data-bs-toggle="modal" data-bs-target="#uploadModal">
-        <i class="bi bi-cloud-upload"></i>
-        <span class="d-none d-sm-inline">Upload</span>
+        <i class="bi bi-plus-lg"></i>
+        <span class="d-none d-sm-inline fw-semibold">Upload</span>
+      </button>
+
+      <!-- Theme toggle -->
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
+        <i class="bi bi-moon-fill"></i>
       </button>
 
       <!-- User menu -->
-      <div class="dropdown">
-        <button class="btn p-0 border-0 d-flex align-items-center gap-2" data-bs-toggle="dropdown"
+      <div class="dropdown flex-shrink-0">
+        <button class="btn p-0 border-0" data-bs-toggle="dropdown"
                 aria-label="User menu" aria-expanded="false">
           <div class="avatar-circle">{{ current_user.initials }}</div>
         </button>
-        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-          <li><span class="dropdown-item-text fw-semibold">{{ current_user.full_name }}</span></li>
-          <li><span class="dropdown-item-text text-muted small">{{ current_user.email }}</span></li>
-          <li><hr class="dropdown-divider"/></li>
+        <ul class="dropdown-menu dropdown-menu-end" style="min-width:210px">
+          <li class="px-3 py-2">
+            <div class="fw-semibold" style="font-size:.9rem">{{ current_user.full_name }}</div>
+            <div class="text-muted" style="font-size:.78rem">{{ current_user.email }}</div>
+          </li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('profile') }}"><i class="bi bi-person me-2 opacity-60"></i>Profile &amp; Settings</a></li>
+          <li><a class="dropdown-item" href="{{ url_for('activity_log') }}"><i class="bi bi-activity me-2 opacity-60"></i>Activity Log</a></li>
           {% if current_user.is_admin %}
-          <li><a class="dropdown-item" href="{{ url_for('admin_panel') }}"><i class="bi bi-shield-check me-2"></i>Admin Panel</a></li>
-          <li><hr class="dropdown-divider"/></li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('admin_panel') }}"><i class="bi bi-shield-check me-2 opacity-60"></i>Admin Panel</a></li>
           {% endif %}
+          <li><hr class="dropdown-divider my-1"/></li>
           <li>
-            <a class="dropdown-item text-danger" href="{{ url_for('auth_logout') }}">
-              <i class="bi bi-box-arrow-right me-2"></i>Logout
+            <a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)">
+              <i class="bi bi-box-arrow-right me-2"></i>Sign Out
             </a>
           </li>
         </ul>
@@ -205,8 +216,8 @@
       (function() {
         const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
         const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
-        const labelColor = () => isDark() ? '#9ca3af' : '#6b7280';
-        const BLUE_PALETTE = ['#2563eb','#3b82f6','#60a5fa','#93c5fd','#bfdbfe','#374151','#6b7280'];
+        const labelColor = () => isDark() ? '#71717a' : '#6b7280';
+        const BLUE_PALETTE = ['#4f46e5','#6366f1','#818cf8','#a5b4fc','#c7d2fe','#7c3aed','#a78bfa'];
 
         // Upload activity bar chart
         const wCtx = document.getElementById('weekChart')?.getContext('2d');
@@ -218,8 +229,8 @@
               datasets: [{
                 label: 'Uploads',
                 data: {{ week_counts | tojson }},
-                backgroundColor: 'rgba(37,99,235,.7)',
-                borderColor: '#2563eb',
+                backgroundColor: 'rgba(79,70,229,.7)',
+                borderColor: '#4f46e5',
                 borderWidth: 1,
                 borderRadius: 6,
               }]
@@ -393,17 +404,16 @@
 
           <!-- Actions -->
           <div class="file-actions d-flex gap-1 p-2 border-top flex-wrap">
+            <!-- Open (password-protected preview) -->
+            <button class="btn btn-sm btn-outline-primary flex-fill" title="Open file"
+                    onclick="openPreviewPrompt('{{ file.uuid }}', '{{ file.original_name | e }}', '{{ file.mimetype }}')">
+              <i class="bi bi-eye"></i>
+            </button>
+
             <a href="{{ url_for('download_file', file_uuid=file.uuid) }}"
-               class="btn btn-sm btn-outline-primary flex-fill" title="Download">
+               class="btn btn-sm btn-outline-secondary flex-fill" title="Download">
               <i class="bi bi-download"></i>
             </a>
-
-            {% if file.is_encrypted %}
-            <button class="btn btn-sm btn-outline-warning flex-fill" title="Decrypt &amp; Download"
-                    onclick="openDecryptModal('{{ file.uuid }}', '{{ file.original_name | e }}')">
-              <i class="bi bi-unlock"></i>
-            </button>
-            {% endif %}
 
             <!-- Verify integrity -->
             {% if file.file_hash %}
@@ -663,7 +673,7 @@
       </div>
       <div class="modal-body text-center py-3">
         <p class="text-muted small mb-2">Your session will expire in</p>
-        <div id="timeoutCountdown">120</div>
+        <output id="timeoutCountdown" aria-live="polite" aria-atomic="true">120</output>
         <p class="text-muted small mt-2 mb-0">seconds due to inactivity.</p>
       </div>
       <div class="modal-footer border-0 pt-0">
@@ -675,31 +685,68 @@
   </div>
 </div>
 
-<!-- ── Decrypt modal ── -->
-<div class="modal fade" id="decryptModal" tabindex="-1">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
+<!-- ── Preview password modal ── -->
+<div class="modal fade" id="previewPasswordModal" tabindex="-1" aria-labelledby="previewPasswordModalLabel">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:380px">
     <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title"><i class="bi bi-unlock me-2 text-warning"></i>Decrypt &amp; Download</h6>
+      <div class="modal-header border-0 pb-0">
+        <div class="d-flex align-items-center gap-2">
+          <div style="width:36px;height:36px;border-radius:10px;background:var(--brand);opacity:.12;position:absolute"></div>
+          <i class="bi bi-lock-fill" style="color:var(--brand);font-size:1.1rem;position:relative"></i>
+          <h6 class="modal-title fw-bold mb-0" id="previewPasswordModalLabel">Open File</h6>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
-        <p class="small text-muted mb-1">File: <span id="decryptFileName" class="fw-semibold text-body"></span></p>
-        <p class="small text-muted mb-3">Enter your account password to decrypt and download this file.</p>
-        <label class="form-label small fw-semibold" for="decryptPassword">Your password</label>
-        <input type="password" class="form-control form-control-sm" id="decryptPassword"
-               placeholder="Enter your password" autocomplete="current-password"/>
-        <div class="text-danger small mt-1" id="decryptError" style="min-height:1.2em"></div>
+      <div class="modal-body pt-3">
+        <p class="text-muted small mb-3" id="previewPwdDesc">Enter your account password to open this file securely.</p>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-key"></i></span>
+          <input type="password" id="previewPwdInput" class="form-control"
+                 placeholder="Your account password" autocomplete="current-password"
+                 onkeydown="if(event.key==='Enter') submitPreviewPassword()"/>
+          <button type="button" class="btn btn-outline-secondary"
+                  onclick="const f=document.getElementById('previewPwdInput');const s=f.type==='password';f.type=s?'text':'password';this.querySelector('i').className=s?'bi bi-eye-slash':'bi bi-eye'">
+            <i class="bi bi-eye"></i>
+          </button>
+        </div>
+        <div id="previewPwdError" class="alert alert-danger d-none small mt-2 mb-0 py-2"></div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-sm btn-warning text-white" id="decryptBtn" onclick="doDecrypt()">
-          <i class="bi bi-unlock me-1"></i>Decrypt &amp; Download
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary fw-semibold btn-sm px-4" id="previewPwdSubmit"
+                onclick="submitPreviewPassword()">
+          <i class="bi bi-eye me-1"></i>Open
         </button>
       </div>
     </div>
   </div>
 </div>
+
+<!-- ── File preview modal ── -->
+<div class="modal fade" id="filePreviewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-xl" style="max-width:min(1100px,95vw)">
+    <div class="modal-content" style="max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header border-0 pb-2">
+        <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+          <i class="bi bi-file-earmark-text" id="previewModalIcon" style="color:var(--brand);font-size:1.1rem;flex-shrink:0"></i>
+          <h6 class="modal-title fw-bold mb-0 text-truncate" id="previewModalTitle" aria-live="polite">File Preview</h6>
+        </div>
+        <button type="button" class="btn-close ms-2" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0 flex-grow-1 overflow-auto d-flex flex-column align-items-center justify-content-center"
+           id="previewModalBody" style="min-height:320px;background:var(--surface)">
+        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+      </div>
+      <div class="modal-footer border-0 pt-2 justify-content-between">
+        <small class="text-muted" id="previewModalMeta"></small>
+        <a id="previewDownloadBtn" href="#" class="btn btn-sm btn-outline-primary fw-semibold">
+          <i class="bi bi-download me-1"></i>Download
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <script>
 document.querySelectorAll('.toast').forEach(t =>
@@ -899,119 +946,39 @@ async function createLink() {
 }
 
 function copyLink() {
-  const input = document.getElementById('linkUrl');
-  const text  = input.value;
-  const icon  = document.getElementById('linkCopyIcon');
+  const text = document.getElementById('linkUrl').value;
+  const icon = document.getElementById('linkCopyIcon');
+  if (!text) return;
 
   function markCopied() {
     icon.className = 'bi bi-check2 text-success';
     setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 2500);
-    showToast('Link copied to clipboard!', 'success');
+    showToast('Link copied!', 'success');
   }
 
-  // Preferred: modern async clipboard API (works on HTTPS incl. Railway + iOS 13.4+)
+  // Always use a transient textarea so selection works on every browser/OS/iOS
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+
   if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(markCopied).catch(() => legacyCopy());
-    return;
-  }
-  legacyCopy();
-
-  function legacyCopy() {
-    // Temporarily remove readonly so iOS can select the text
-    const wasReadonly = input.hasAttribute('readonly');
-    input.removeAttribute('readonly');
-    input.focus();
-    input.select();
-    input.setSelectionRange(0, text.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) {}
-    if (wasReadonly) input.setAttribute('readonly', '');
-    if (ok) { markCopied(); return; }
-    // Last resort: leave text selected and tell user to copy manually
-    showToast('Long-press the link and choose Copy.', 'warning');
+    navigator.clipboard.writeText(text)
+      .then(() => { ta.remove(); markCopied(); })
+      .catch(() => {
+        const ok = (() => { try { return document.execCommand('copy'); } catch(_){return false;} })();
+        ta.remove();
+        ok ? markCopied() : showToast('Long-press the link and choose Copy.', 'warning');
+      });
+  } else {
+    const ok = (() => { try { return document.execCommand('copy'); } catch(_){return false;} })();
+    ta.remove();
+    ok ? markCopied() : showToast('Long-press the link and choose Copy.', 'warning');
   }
 }
 
-// ── Decrypt & Download ──
-let _decryptUuid = null;
-
-function openDecryptModal(fileUuid, fileName) {
-  _decryptUuid = fileUuid;
-  document.getElementById('decryptFileName').textContent = `"${fileName}"`;
-  const pw = document.getElementById('decryptPassword');
-  pw.value = '';
-  pw.classList.remove('is-invalid');
-  document.getElementById('decryptError').textContent = '';
-  new bootstrap.Modal(document.getElementById('decryptModal')).show();
-  setTimeout(() => pw.focus(), 400);
-}
-
-function _decryptShowError(msg) {
-  const pw    = document.getElementById('decryptPassword');
-  const errEl = document.getElementById('decryptError');
-  pw.classList.add('is-invalid');
-  errEl.textContent = msg;
-  showToast(msg, 'danger');
-}
-
-async function doDecrypt() {
-  const pw    = document.getElementById('decryptPassword');
-  const errEl = document.getElementById('decryptError');
-  const btn   = document.getElementById('decryptBtn');
-
-  pw.classList.remove('is-invalid');
-  errEl.textContent = '';
-
-  if (!pw.value) {
-    pw.classList.add('is-invalid');
-    errEl.textContent = 'Please enter your password.';
-    pw.focus();
-    return;
-  }
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Decrypting…';
-
-  try {
-    const form = new FormData();
-    form.append('csrf_token', CSRF);
-    form.append('password', pw.value);
-
-    const r = await fetch(`/decrypt/${_decryptUuid}`, {
-      method: 'POST',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-      body: form,
-    });
-
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
-
-    if (r.ok) {
-      const blob  = await r.blob();
-      const cd    = r.headers.get('Content-Disposition') || '';
-      const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-      const fname = match ? match[1].replace(/['"]/g, '') : 'decrypted_file';
-      const url   = URL.createObjectURL(blob);
-      const a     = document.createElement('a');
-      a.href = url; a.download = fname;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
-      showToast('File decrypted and downloaded!', 'success');
-    } else {
-      let msg = 'Decryption failed. Please try again.';
-      try { const d = await r.json(); msg = d.error || msg; } catch (_) {}
-      // Special-case the most common Railway error so it's actionable
-      if (r.status === 404) msg = 'File not found on the server. Please re-upload the file and try again.';
-      if (r.status === 403 && msg.toLowerCase().includes('password')) msg = 'Incorrect password. Use your FileVault login password.';
-      _decryptShowError(msg);
-    }
-  } catch (_) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-unlock me-1"></i>Decrypt & Download';
-    _decryptShowError('Network error. Check your connection and try again.');
-  }
-}
 
 async function deleteLink() {
   if (!_currentToken) return;
@@ -1167,6 +1134,141 @@ async function bulkDownload() {
   a.download = r.headers.get('Content-Disposition')?.match(/filename=(.+)/)?.[1] || 'files.zip';
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── File preview (password-protected) ──────────────────────────────────────
+let _pvUuid = '', _pvMime = '', _pvName = '', _pvDownloadUrl = '';
+
+function openPreviewPrompt(uuid, name, mime) {
+  _pvUuid = uuid;
+  _pvMime = mime || '';
+  _pvName = name;
+  _pvDownloadUrl = '/download/' + uuid;
+
+  const inp = document.getElementById('previewPwdInput');
+  const err = document.getElementById('previewPwdError');
+  const btn = document.getElementById('previewPwdSubmit');
+  inp.value = '';
+  err.classList.add('d-none');
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
+  document.getElementById('previewPwdDesc').textContent =
+    'Enter your account password to open “' + name + '” securely.';
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('previewPasswordModal')).show();
+  setTimeout(() => inp.focus(), 350);
+}
+
+async function submitPreviewPassword() {
+  const inp  = document.getElementById('previewPwdInput');
+  const err  = document.getElementById('previewPwdError');
+  const btn  = document.getElementById('previewPwdSubmit');
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  err.classList.add('d-none');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verifying…';
+
+  try {
+    const res  = await fetch('/preview-auth/' + _pvUuid, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest' },
+      body:    JSON.stringify({ password: inp.value }),
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      bootstrap.Modal.getInstance(document.getElementById('previewPasswordModal')).hide();
+      openFilePreview(data.preview_url, data.mimetype, data.filename);
+    } else {
+      err.textContent = data.error || 'Incorrect password.';
+      err.classList.remove('d-none');
+      inp.value = '';
+      inp.focus();
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
+    }
+  } catch {
+    err.textContent = 'Network error. Please try again.';
+    err.classList.remove('d-none');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
+  }
+}
+
+function openFilePreview(url, mime, name) {
+  const body  = document.getElementById('previewModalBody');
+  const title = document.getElementById('previewModalTitle');
+  const meta  = document.getElementById('previewModalMeta');
+  const dlBtn = document.getElementById('previewDownloadBtn');
+
+  title.textContent = name;
+  meta.textContent  = mime || '';
+  dlBtn.href        = _pvDownloadUrl;
+  body.innerHTML    = '';
+
+  const m = mime || '';
+
+  if (m.startsWith('image/')) {
+    const img = document.createElement('img');
+    img.src   = url;
+    img.alt   = name;
+    img.style.cssText = 'max-width:100%;max-height:70vh;object-fit:contain;display:block';
+    body.style.padding = '1.5rem';
+    body.appendChild(img);
+
+  } else if (m === 'application/pdf') {
+    const frame = document.createElement('iframe');
+    frame.src   = url;
+    frame.title = name;
+    frame.style.cssText = 'width:100%;height:72vh;border:none;display:block';
+    body.style.padding = '0';
+    body.appendChild(frame);
+
+  } else if (m.startsWith('video/')) {
+    const vid = document.createElement('video');
+    vid.src     = url;
+    vid.controls = true;
+    vid.style.cssText = 'max-width:100%;max-height:70vh;display:block';
+    body.style.padding = '1.5rem';
+    body.appendChild(vid);
+
+  } else if (m.startsWith('audio/')) {
+    const aud = document.createElement('audio');
+    aud.src      = url;
+    aud.controls = true;
+    aud.style.cssText = 'width:100%;max-width:480px';
+    body.style.padding = '3rem 1.5rem';
+    body.appendChild(aud);
+
+  } else if (m.startsWith('text/') || m === 'application/json'
+          || m === 'application/xml' || m === 'application/javascript') {
+    body.style.padding = '0';
+    body.style.alignItems = 'stretch';
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner-border text-primary m-auto';
+    spinner.setAttribute('role', 'status');
+    body.appendChild(spinner);
+    fetch(url).then(r => r.text()).then(txt => {
+      const pre = document.createElement('pre');
+      pre.textContent = txt;
+      pre.style.cssText = 'margin:0;padding:1.5rem;font-size:.82rem;line-height:1.6;overflow:auto;flex:1;color:var(--text-primary);background:var(--surface);width:100%;white-space:pre-wrap;word-break:break-word';
+      body.replaceChildren(pre);
+    }).catch(() => showPreviewUnsupported(body, name));
+
+  } else {
+    showPreviewUnsupported(body, name);
+  }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('filePreviewModal')).show();
+}
+
+function showPreviewUnsupported(body, name) {
+  body.style.padding = '3rem 1.5rem';
+  body.style.textAlign = 'center';
+  body.innerHTML = `
+    <i class="bi bi-file-earmark-x" style="font-size:3rem;color:var(--text-muted);opacity:.4;display:block;margin-bottom:1rem"></i>
+    <div style="color:var(--text-muted);font-size:.9rem">Preview not available for <strong>${name}</strong>.<br>Use the Download button to open it locally.</div>`;
 }
 </script>
 {% endblock %}

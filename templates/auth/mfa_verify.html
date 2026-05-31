@@ -5,10 +5,13 @@
 <div class="auth-wrapper d-flex min-vh-100">
 
   <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
-    <div class="logo"><i class="bi bi-shield-lock-fill me-2"></i>FileVault</div>
-    <div>
-      <h2 class="fw-bold mb-3">One more step<br>to keep you safe.</h2>
-      <p class="opacity-75">Verify your identity to continue.</p>
+    <div class="logo d-flex align-items-center gap-2">
+      <i class="bi bi-shield-lock-fill"></i>FileVault
+    </div>
+    <div class="position-relative" style="z-index:1">
+      <div class="mb-3" style="font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.45);font-weight:600">Two-Factor Auth</div>
+      <h2 class="fw-bold mb-3" style="font-size:2rem;letter-spacing:-.03em;line-height:1.15">One more step<br>to keep you safe.</h2>
+      <p style="color:rgba(255,255,255,.6);line-height:1.7;max-width:320px">Verify your identity using biometrics or your authenticator app to access your vault.</p>
     </div>
     <div></div>
   </div>
@@ -74,7 +77,7 @@
             </div>
             <small class="text-muted">Code refreshes every 30 seconds.</small>
           </div>
-          <button type="submit" class="btn btn-primary w-100 fw-semibold py-2">
+          <button type="submit" class="btn btn-primary w-100 fw-semibold py-2 mt-1" style="font-size:.95rem">
             <i class="bi bi-arrow-right me-2"></i>Verify
           </button>
         </form>
@@ -89,10 +92,10 @@
       </div>
       {% endif %}
 
-      <hr class="my-4"/>
+      <div class="divider-text my-4">or</div>
       <p class="text-center text-muted small mb-0">
         <a href="{{ url_for('auth_login') }}" class="fw-semibold text-decoration-none">
-          <i class="bi bi-arrow-left me-1"></i>Back to login
+          <i class="bi bi-arrow-left me-1"></i>Back to Sign In
         </a>
       </p>
 

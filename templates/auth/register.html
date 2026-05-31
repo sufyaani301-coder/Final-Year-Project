@@ -6,17 +6,19 @@
 
   <!-- Left panel -->
   <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
-    <div class="logo">
-      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+    <div class="logo d-flex align-items-center gap-2">
+      <i class="bi bi-shield-lock-fill"></i>FileVault
     </div>
-    <div>
-      <h2 class="fw-bold mb-3">Your files,<br>safe and accessible.</h2>
-      <p class="opacity-75">Create a free account and start managing your files today.</p>
+    <div class="position-relative" style="z-index:1">
+      <div class="mb-3" style="font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.45);font-weight:600">Enterprise File Security</div>
+      <h2 class="fw-bold mb-3" style="font-size:2rem;letter-spacing:-.03em;line-height:1.15">Your files,<br>safe and accessible.</h2>
+      <p style="color:rgba(255,255,255,.6);line-height:1.7;max-width:320px">Create a free account and start managing, encrypting, and sharing files securely.</p>
     </div>
     <div class="feature-pills d-flex flex-wrap gap-2">
-      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-cloud-upload me-1"></i>50 MB limit</span>
-      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-people me-1"></i>File sharing</span>
-      <span class="badge rounded-pill bg-white bg-opacity-20"><i class="bi bi-bell me-1"></i>Live alerts</span>
+      <span class="badge rounded-pill"><i class="bi bi-cloud-upload me-1"></i>50 MB limit</span>
+      <span class="badge rounded-pill"><i class="bi bi-people me-1"></i>File sharing</span>
+      <span class="badge rounded-pill"><i class="bi bi-bell me-1"></i>Live alerts</span>
+      <span class="badge rounded-pill"><i class="bi bi-activity me-1"></i>Audit logs</span>
     </div>
   </div>
 
@@ -81,15 +83,15 @@
           </div>
         </div>
 
-        <button type="submit" class="btn btn-primary w-100 fw-semibold py-2">
+        <button type="submit" class="btn btn-primary w-100 fw-semibold py-2 mt-1" style="font-size:.95rem">
           <i class="bi bi-person-check me-2"></i>Create Account
         </button>
       </form>
 
-      <hr class="my-4"/>
+      <div class="divider-text my-4">or</div>
       <p class="text-center text-muted small mb-0">
         Already have an account?
-        <a href="{{ url_for('auth_login') }}" class="fw-semibold text-decoration-none">Sign in</a>
+        <a href="{{ url_for('auth_login') }}" class="fw-semibold text-decoration-none">Sign in free</a>
       </p>
 
     </div>

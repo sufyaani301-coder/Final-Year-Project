@@ -972,19 +972,15 @@ def upload_file():
     save_path     = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
     raw_data      = f.read()
     sha256_hash   = hashlib.sha256(raw_data).hexdigest()
-    if fernet:
-        disk_data = fernet.encrypt(raw_data)
-    else:
-        disk_data = raw_data
     with open(save_path, 'wb') as fh:
-        fh.write(disk_data)
+        fh.write(raw_data)
     size = len(raw_data)
     mime = mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
 
     try:
         rec = File(original_name=original_name, stored_name=stored_name,
                    size=size, mimetype=mime, user_id=current_user.id,
-                   is_encrypted=fernet is not None, file_hash=sha256_hash)
+                   is_encrypted=False, file_hash=sha256_hash)
         db.session.add(rec)
         log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)})')
         db.session.commit()
@@ -1011,11 +1007,6 @@ def download_file(file_uuid):
         abort(403)
     log_activity('download', f'Downloaded "{rec.original_name}"')
     db.session.commit()
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
-    if rec.is_encrypted and fernet:
-        data = fernet.decrypt(open(file_path, 'rb').read())
-        return send_file(io.BytesIO(data), as_attachment=True,
-                         download_name=rec.original_name, mimetype=rec.mimetype)
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
                                as_attachment=True, download_name=rec.original_name)
 
@@ -1032,32 +1023,42 @@ def decrypt_file(file_uuid):
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
     if not os.path.exists(file_path):
         return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
-    try:
-        if rec.is_encrypted and fernet:
-            data = fernet.decrypt(open(file_path, 'rb').read())
-        else:
-            with open(file_path, 'rb') as fh:
-                data = fh.read()
-    except Exception as exc:
-        return jsonify(success=False, error=f'Decryption error: {exc}'), 500
-    log_activity('download', f'Decrypted & downloaded "{rec.original_name}"')
+    log_activity('download', f'Downloaded "{rec.original_name}"')
     db.session.commit()
-    return send_file(io.BytesIO(data), as_attachment=True,
-                     download_name=rec.original_name, mimetype=rec.mimetype)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
+                               as_attachment=True, download_name=rec.original_name)
+
+
+@app.route('/preview-auth/<file_uuid>', methods=['POST'])
+@login_required
+def preview_auth(file_uuid):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    shared_ids = [s.shared_with_id for s in rec.shares]
+    if rec.user_id != current_user.id and current_user.id not in shared_ids:
+        return jsonify(success=False, error='Access denied.'), 403
+    data = request.get_json(silent=True) or {}
+    password = data.get('password', '')
+    if not password or not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password. Please try again.'), 401
+    session[f'pv_{file_uuid}'] = True
+    log_activity('preview', f'Opened "{rec.original_name}"')
+    return jsonify(success=True,
+                   preview_url=url_for('preview_file', file_uuid=file_uuid),
+                   mimetype=rec.mimetype or '',
+                   filename=rec.original_name)
 
 
 @app.route('/preview/<file_uuid>')
 @login_required
 def preview_file(file_uuid):
-    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
+    if not session.pop(f'pv_{file_uuid}', False):
         abort(403)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
-    if rec.is_encrypted and fernet:
-        data = fernet.decrypt(open(file_path, 'rb').read())
-        return send_file(io.BytesIO(data), mimetype=rec.mimetype)
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    shared_ids = [s.shared_with_id for s in rec.shares]
+    if rec.user_id != current_user.id and current_user.id not in shared_ids:
+        abort(403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
-                               mimetype=rec.mimetype)
+                               mimetype=rec.mimetype or 'application/octet-stream')
 
 
 @app.route('/delete/<file_uuid>', methods=['POST'])
@@ -1174,10 +1175,6 @@ def public_download_file(token_str):
     tok.download_count += 1
     db.session.commit()
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], tok.file.stored_name)
-    if tok.file.is_encrypted and fernet:
-        data = fernet.decrypt(open(file_path, 'rb').read())
-        return send_file(io.BytesIO(data), as_attachment=True,
-                         download_name=tok.file.original_name, mimetype=tok.file.mimetype)
     return send_from_directory(app.config['UPLOAD_FOLDER'], tok.file.stored_name,
                                as_attachment=True, download_name=tok.file.original_name)
 
@@ -1278,11 +1275,6 @@ def bulk_download():
                 continue
             with open(path, 'rb') as fh:
                 raw = fh.read()
-            if rec.is_encrypted and fernet:
-                try:
-                    raw = fernet.decrypt(raw)
-                except Exception:
-                    pass
             zf.writestr(rec.original_name, raw)
     buf.seek(0)
     log_activity('download', f'Bulk downloaded {len(uuids)} file(s) as ZIP')
@@ -1375,7 +1367,7 @@ def verify_file(file_uuid):
     try:
         with open(file_path, 'rb') as fh:
             disk_data = fh.read()
-        raw_data = fernet.decrypt(disk_data) if (rec.is_encrypted and fernet) else disk_data
+        raw_data = disk_data
     except Exception:
         return jsonify(intact=False, error='Could not read file from disk.')
     current_hash = hashlib.sha256(raw_data).hexdigest()

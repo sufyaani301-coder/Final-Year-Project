@@ -7,7 +7,7 @@
   <!-- Sidebar -->
   <nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
     <div class="sidebar-brand">
-      <i class="bi bi-shield-lock-fill me-2"></i>FileVault
+      <i class="bi bi-shield-lock-fill"></i><span>FileVault</span>
     </div>
 
     <ul class="nav flex-column mt-3 flex-grow-1">
@@ -23,12 +23,12 @@
       </li>
     </ul>
 
-    <div class="sidebar-footer p-3">
-      <div class="d-flex align-items-center gap-2">
-        <div class="avatar-circle-sm">{{ current_user.initials }}</div>
-        <div class="small lh-sm">
-          <div class="fw-semibold text-truncate" style="max-width:130px">{{ current_user.full_name }}</div>
-          <div class="text-muted" style="font-size:.7rem">{{ current_user.email[:22] }}…</div>
+    <div class="sidebar-footer">
+      <div class="sidebar-user-link" style="cursor:default">
+        <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
+        <div class="lh-sm overflow-hidden flex-grow-1">
+          <div class="sidebar-user-name">{{ current_user.full_name }}</div>
+          <div class="sidebar-user-email">{{ current_user.email }}</div>
         </div>
       </div>
     </div>
@@ -43,12 +43,12 @@
       <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
         <i class="bi bi-list fs-4"></i>
       </button>
-      <h5 class="flex-grow-1 mb-0">Profile Settings</h5>
-      <button class="theme-toggle flex-shrink-0" title="Toggle dark mode" aria-label="Toggle dark mode">
+      <h5 class="flex-grow-1 mb-0 fw-bold" style="letter-spacing:-.02em">Profile &amp; Settings</h5>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
         <i class="bi bi-moon-fill"></i>
       </button>
       <a href="{{ url_for('auth_logout') }}" class="btn btn-outline-danger btn-sm">
-        <i class="bi bi-box-arrow-left me-1"></i>Logout
+        <i class="bi bi-box-arrow-left me-1"></i>Sign Out
       </a>
     </nav>
 

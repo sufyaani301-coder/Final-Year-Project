@@ -2,16 +2,22 @@
 {% block title %}Server Error — FileVault{% endblock %}
 
 {% block body %}
-<div class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
-  <div class="text-center">
-    <div class="display-1 fw-bold text-dark mb-3">
-      <i class="bi bi-exclamation-octagon"></i>
+<div class="d-flex align-items-center justify-content-center min-vh-100" style="background:var(--bg)">
+  <div class="text-center px-4" style="max-width:460px">
+    <div style="font-size:5rem;font-weight:800;letter-spacing:-.04em;line-height:1;color:#f97316;opacity:.15;margin-bottom:.25rem">500</div>
+    <div class="mb-4" style="font-size:3rem;line-height:1">
+      <i class="bi bi-exclamation-octagon" style="color:#f97316"></i>
     </div>
-    <h1 class="h2 mb-3">Server Error</h1>
-    <p class="text-muted mb-4 fs-5">Something went wrong on our end. Please try again later.</p>
-    <a href="{{ url_for('dashboard') }}" class="btn btn-primary">
-      <i class="bi bi-house me-2"></i>Go to Dashboard
-    </a>
+    <h1 class="fw-bold mb-2" style="font-size:1.6rem;letter-spacing:-.02em;color:var(--text-primary)">Something went wrong</h1>
+    <p class="mb-5" style="color:var(--text-muted);line-height:1.65">An unexpected error occurred on our end. We've been notified and are working on it. Please try again in a moment.</p>
+    <div class="d-flex gap-2 justify-content-center">
+      <a href="{{ url_for('dashboard') }}" class="btn btn-primary fw-semibold px-4">
+        <i class="bi bi-house me-2"></i>Go to Dashboard
+      </a>
+      <a href="javascript:location.reload()" class="btn btn-outline-secondary fw-semibold px-4">
+        <i class="bi bi-arrow-clockwise me-2"></i>Try Again
+      </a>
+    </div>
   </div>
 </div>
 {% endblock %}
