@@ -2464,4 +2464,5 @@ print("=== app.py: module load complete ===", flush=True)
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV', 'production') == 'development'
-    socketio.run(app, debug=debug, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, debug=debug, host='0.0.0.0', port=port)
