@@ -76,6 +76,15 @@
         <i class="bi bi-person-gear me-2"></i>Admin Panel
       </a>
     </li>
+    <li class="nav-item">
+      <a href="{{ url_for('admin_change_requests') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'admin_change_requests' %}active{% endif %}">
+        <i class="bi bi-send-check me-2"></i>Change Requests
+        {% if pending_change_requests > 0 %}
+        <span class="badge bg-warning text-dark ms-auto">{{ pending_change_requests }}</span>
+        {% endif %}
+      </a>
+    </li>
     {% endif %}
   </ul>
 

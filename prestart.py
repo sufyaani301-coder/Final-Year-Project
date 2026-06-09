@@ -96,6 +96,9 @@ with app.app_context():
         "ALTER TABLE files ADD COLUMN check_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE files ADD COLUMN alert_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN default_policy_id INTEGER",
+        # change_requests table is created by db.create_all(); columns patched for safety
+        "ALTER TABLE change_requests ADD COLUMN pending_file VARCHAR(260)",
+        "ALTER TABLE change_requests ADD COLUMN executed_at TIMESTAMP",
     ]:
         try:
             db.session.execute(text(_stmt))

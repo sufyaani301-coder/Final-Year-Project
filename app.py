@@ -604,6 +604,42 @@ class AlertComment(db.Model):
     user  = db.relationship('User')
 
 
+class ChangeRequest(db.Model):
+    """Pending authorisation for a sensitive file action (replace / delete)."""
+    __tablename__ = 'change_requests'
+    id              = db.Column(db.Integer, primary_key=True)
+    file_id         = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    action_type     = db.Column(db.String(30), nullable=False)   # replace | delete | rename
+    action_data     = db.Column(db.Text,    nullable=True)        # JSON blob
+    justification   = db.Column(db.String(500), nullable=True)
+    status          = db.Column(db.String(20),  nullable=False, default='pending')
+    requested_at    = db.Column(db.DateTime, nullable=False,
+                                default=lambda: datetime.now(timezone.utc))
+    reviewed_by_id  = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    reviewed_at     = db.Column(db.DateTime, nullable=True)
+    review_note     = db.Column(db.String(500), nullable=True)
+    pending_file    = db.Column(db.String(260), nullable=True)   # tmp file for replace
+    executed_at     = db.Column(db.DateTime, nullable=True)
+
+    file         = db.relationship('File', foreign_keys=[file_id])
+    requested_by = db.relationship('User', foreign_keys=[requested_by_id])
+    reviewed_by  = db.relationship('User', foreign_keys=[reviewed_by_id])
+
+    @property
+    def action_label(self):
+        return {'replace': 'Replace file content',
+                'delete':  'Delete file',
+                'rename':  'Rename file'}.get(self.action_type, self.action_type.title())
+
+    @property
+    def data(self):
+        try:
+            return _json.loads(self.action_data) if self.action_data else {}
+        except Exception:
+            return {}
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -798,18 +834,21 @@ def _fim_nav_context():
         return {'fim_open_alerts': 0, 'nav_total_files': 0}
     try:
         if current_user.is_admin:
-            open_count = IntegrityAlert.query.filter_by(status='open').count()
-            file_count = File.query.count()
+            open_count   = IntegrityAlert.query.filter_by(status='open').count()
+            file_count   = File.query.count()
+            pending_reqs = ChangeRequest.query.filter_by(status='pending').count()
         else:
             uid_sub    = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
             open_count = IntegrityAlert.query.filter(
                 IntegrityAlert.status == 'open',
                 IntegrityAlert.file_id.in_(uid_sub),
             ).count()
-            file_count = File.query.filter_by(user_id=current_user.id).count()
-        return {'fim_open_alerts': open_count, 'nav_total_files': file_count}
+            file_count   = File.query.filter_by(user_id=current_user.id).count()
+            pending_reqs = 0
+        return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
+                'pending_change_requests': pending_reqs}
     except Exception:
-        return {'fim_open_alerts': 0, 'nav_total_files': 0}
+        return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_change_requests': 0}
 
 
 # ---------------------------------------------------------------------------
@@ -2289,6 +2328,178 @@ def fim_export_report():
     output = io.BytesIO(buf.getvalue().encode('utf-8-sig'))
     fname  = f'fim_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.csv'
     return send_file(output, mimetype='text/csv', as_attachment=True, download_name=fname)
+
+
+# ---------------------------------------------------------------------------
+# Change-request approval workflow
+# ---------------------------------------------------------------------------
+@app.route('/fim/change-request/<file_uuid>', methods=['POST'])
+@login_required
+def fim_submit_change_request(file_uuid):
+    """Non-admins submit a request; admins may still act directly."""
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+
+    action_type   = request.form.get('action_type', '').strip()
+    justification = request.form.get('justification', '').strip()
+    if action_type not in ('replace', 'delete', 'rename'):
+        return jsonify(success=False, error='Invalid action type'), 400
+
+    action_data  = {}
+    pending_file = None
+
+    if action_type == 'rename':
+        new_name = request.form.get('new_name', '').strip()
+        if not new_name:
+            return jsonify(success=False, error='New name is required'), 400
+        action_data['new_name'] = new_name
+
+    elif action_type == 'replace':
+        if 'file' not in request.files or not request.files['file'].filename:
+            return jsonify(success=False, error='No replacement file selected'), 400
+        f = request.files['file']
+        if not allowed_file(f.filename):
+            return jsonify(success=False, error='File type not allowed'), 400
+        pending_dir  = os.path.join(app.config['UPLOAD_FOLDER'], 'pending')
+        os.makedirs(pending_dir, exist_ok=True)
+        pending_name = f'{uuid.uuid4().hex}_{secure_filename(f.filename)}'
+        f.save(os.path.join(pending_dir, pending_name))
+        pending_file = pending_name
+        action_data['original_filename'] = f.filename
+
+    cr = ChangeRequest(
+        file_id         = file_rec.id,
+        requested_by_id = current_user.id,
+        action_type     = action_type,
+        action_data     = _json.dumps(action_data),
+        justification   = justification[:500] or None,
+        pending_file    = pending_file,
+    )
+    db.session.add(cr)
+    db.session.flush()
+    log_activity('change_request',
+                 f'Requested {action_type} on "{file_rec.original_name}" — awaiting approval')
+    db.session.commit()
+
+    socketio.emit('change_request', {
+        'request_id': cr.id,
+        'action':     action_type,
+        'filename':   file_rec.original_name,
+        'requester':  current_user.full_name,
+        'timestamp':  cr.requested_at.strftime('%H:%M:%S'),
+    })
+    return jsonify(success=True, request_id=cr.id,
+                   message='Authorization request sent to admin. You will be notified when reviewed.')
+
+
+@app.route('/admin/change-requests')
+@login_required
+def admin_change_requests():
+    if not current_user.is_admin:
+        abort(403)
+    status_filter = request.args.get('status', 'pending')
+    q = ChangeRequest.query
+    if status_filter:
+        q = q.filter_by(status=status_filter)
+    reqs = q.order_by(ChangeRequest.requested_at.desc()).all()
+    return render_template('admin/change_requests.html',
+                           change_requests=reqs, status_filter=status_filter)
+
+
+@app.route('/admin/change-requests/<int:req_id>/approve', methods=['POST'])
+@login_required
+def admin_approve_change_request(req_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    cr = ChangeRequest.query.get_or_404(req_id)
+    if cr.status != 'pending':
+        return jsonify(success=False, error='Request already reviewed'), 400
+    file_rec = cr.file
+    if not file_rec:
+        return jsonify(success=False, error='File no longer exists'), 404
+
+    note = request.form.get('note', '').strip()
+    try:
+        if cr.action_type == 'delete':
+            name, stored = file_rec.original_name, file_rec.stored_name
+            db.session.delete(file_rec)
+            db.session.flush()
+            disk = os.path.join(app.config['UPLOAD_FOLDER'], stored)
+            if os.path.exists(disk):
+                os.remove(disk)
+            log_activity('delete', f'[AUTHORIZED] Deleted "{name}" (req #{cr.id})')
+
+        elif cr.action_type == 'replace':
+            if cr.pending_file:
+                import shutil
+                src = os.path.join(app.config['UPLOAD_FOLDER'], 'pending', cr.pending_file)
+                dst = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+                if os.path.exists(src):
+                    shutil.move(src, dst)
+            from integrity_engine import capture_baseline
+            capture_baseline(file_rec, current_user, reason='authorized_replace')
+            log_activity('tamper_simulation',
+                         f'[AUTHORIZED] Replaced "{file_rec.original_name}" (req #{cr.id})')
+
+        elif cr.action_type == 'rename':
+            new_name = cr.data.get('new_name', '')
+            if new_name:
+                old_name = file_rec.original_name
+                file_rec.original_name = secure_filename(new_name)
+                log_activity('rename',
+                             f'[AUTHORIZED] Renamed "{old_name}" → "{file_rec.original_name}" (req #{cr.id})')
+
+        cr.status         = 'approved'
+        cr.reviewed_by_id = current_user.id
+        cr.reviewed_at    = datetime.now(timezone.utc)
+        cr.review_note    = note
+        cr.executed_at    = datetime.now(timezone.utc)
+        db.session.commit()
+
+        socketio.emit('change_request_update', {
+            'request_id': cr.id,
+            'status':     'approved',
+            'reviewer':   current_user.full_name,
+            'note':       note,
+        })
+        return jsonify(success=True, message='Request approved and executed.')
+
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('Change request execution failed: %s', exc)
+        return jsonify(success=False, error=str(exc)), 500
+
+
+@app.route('/admin/change-requests/<int:req_id>/reject', methods=['POST'])
+@login_required
+def admin_reject_change_request(req_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    cr = ChangeRequest.query.get_or_404(req_id)
+    if cr.status != 'pending':
+        return jsonify(success=False, error='Request already reviewed'), 400
+
+    note = request.form.get('note', '').strip()
+    if cr.pending_file:
+        p = os.path.join(app.config['UPLOAD_FOLDER'], 'pending', cr.pending_file)
+        if os.path.exists(p):
+            os.remove(p)
+
+    cr.status         = 'rejected'
+    cr.reviewed_by_id = current_user.id
+    cr.reviewed_at    = datetime.now(timezone.utc)
+    cr.review_note    = note
+    log_activity('change_request', f'Rejected change request #{cr.id}')
+    db.session.commit()
+
+    socketio.emit('change_request_update', {
+        'request_id': cr.id,
+        'status':     'rejected',
+        'reviewer':   current_user.full_name,
+        'note':       note,
+    })
+    return jsonify(success=True, message='Request rejected.')
 
 
 # ---------------------------------------------------------------------------

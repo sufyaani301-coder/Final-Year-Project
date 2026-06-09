@@ -123,33 +123,59 @@
                   <i class="bi bi-download"></i>
                 </a>
                 {% if f.user_id == current_user.id or current_user.is_admin %}
-                <!-- Rename → Medium alert -->
+                <!-- Rename -->
                 <button class="btn btn-sm btn-outline-secondary" title="Rename file (generates Medium alert)"
                         onclick="openRename('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-pencil"></i>
                 </button>
-                <!-- Replace file content → real modification → Critical alert -->
-                <button class="btn btn-sm btn-outline-primary" title="Replace file content (real modification)"
+                {% if current_user.is_admin %}
+                <!-- Admin: direct replace -->
+                <button class="btn btn-sm btn-outline-primary" title="Replace file content"
                         onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-file-earmark-arrow-up"></i>
                 </button>
-                <!-- Simulate tamper → Critical alert -->
+                {% elif f.monitoring_enabled %}
+                <!-- Non-admin + monitored: must request authorization -->
+                <button class="btn btn-sm btn-outline-primary" title="Request authorized replacement"
+                        onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'replace')">
+                  <i class="bi bi-send-check"></i>
+                </button>
+                {% else %}
+                <!-- Non-admin + not monitored: direct replace OK -->
+                <button class="btn btn-sm btn-outline-primary" title="Replace file content"
+                        onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                  <i class="bi bi-file-earmark-arrow-up"></i>
+                </button>
+                {% endif %}
+                <!-- Simulate tamper (demo) -->
                 <button class="btn btn-sm btn-outline-warning" title="Simulate unauthorised modification (demo)"
                         onclick="confirmTamper('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
                   <i class="bi bi-bug"></i>
                 </button>
-                <!-- Reset baseline (admin) -->
                 {% if current_user.is_admin %}
+                <!-- Reset baseline -->
                 <button class="btn btn-sm btn-outline-info" title="Reset baseline"
                         onclick="resetBaseline('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
                   <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
-                {% endif %}
-                <!-- Delete → High alert -->
-                <button class="btn btn-sm btn-outline-danger" title="Delete (generates High alert if monitored)"
+                <!-- Admin: direct delete -->
+                <button class="btn btn-sm btn-outline-danger" title="Delete file"
                         onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
                   <i class="bi bi-trash"></i>
                 </button>
+                {% elif f.monitoring_enabled %}
+                <!-- Non-admin + monitored: must request authorization to delete -->
+                <button class="btn btn-sm btn-outline-danger" title="Request authorized deletion"
+                        onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'delete')">
+                  <i class="bi bi-send-check"></i>
+                </button>
+                {% else %}
+                <!-- Non-admin + not monitored: direct delete OK -->
+                <button class="btn btn-sm btn-outline-danger" title="Delete file"
+                        onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
                 {% endif %}
               </div>
             </td>
@@ -296,6 +322,52 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-sm btn-danger" id="replaceConfirm"><i class="bi bi-file-earmark-arrow-up me-1"></i>Replace &amp; Check Integrity</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Request Authorization modal (non-admin on monitored files) -->
+<div class="modal fade" id="authRequestModal" tabindex="-1" aria-labelledby="authRequestModalLabel">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="authRequestModalLabel">
+          <i class="bi bi-send-check me-2 text-warning"></i>Request Authorization
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3">
+          This file is monitored. Your request will be sent to an admin for approval.
+          The action will be executed <strong>without generating an alert</strong> once approved.
+        </p>
+        <div class="alert alert-info py-2 small mb-3">
+          <i class="bi bi-info-circle me-1"></i>
+          Action: <strong id="authActionLabel"></strong> on <em id="authFileName"></em>
+        </div>
+        <!-- Replacement file picker (shown only for replace action) -->
+        <div id="authReplaceSection" class="d-none mb-3">
+          <label class="form-label small fw-semibold" for="authReplaceInput">Replacement file</label>
+          <button type="button" class="btn w-100 border rounded-2 p-3 text-center"
+                  onclick="document.getElementById('authReplaceInput').click()">
+            <i class="bi bi-upload fs-4 text-primary"></i>
+            <p class="small mb-0 mt-1 text-muted">Click to choose replacement file</p>
+            <div id="authReplaceChosen" class="small text-primary fw-semibold mt-1"></div>
+          </button>
+          <input type="file" id="authReplaceInput" class="d-none"/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold" for="authJustification">Justification <span class="text-muted fw-normal">(optional)</span></label>
+          <textarea id="authJustification" class="form-control form-control-sm" rows="3"
+                    placeholder="Explain why this change is needed…" maxlength="500"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning" id="authRequestConfirm">
+          <i class="bi bi-send me-1"></i>Send Request
+        </button>
       </div>
     </div>
   </div>
@@ -533,5 +605,64 @@ document.getElementById('tamperConfirm')?.addEventListener('click', async () => 
     showToast(d.error || 'Simulation failed.', 'danger');
   }
 });
+
+// ── Request Authorization ──
+let _authUuid = null, _authAction = null;
+document.getElementById('authReplaceInput')?.addEventListener('change', function() {
+  document.getElementById('authReplaceChosen').textContent = this.files[0]?.name ? `Selected: ${this.files[0].name}` : '';
+});
+function openAuthRequest(uuid, fileName, action) {
+  _authUuid = uuid; _authAction = action;
+  document.getElementById('authFileName').textContent = `"${fileName}"`;
+  document.getElementById('authActionLabel').textContent = action === 'replace' ? 'Replace content' : 'Delete file';
+  document.getElementById('authJustification').value = '';
+  document.getElementById('authReplaceInput').value = '';
+  document.getElementById('authReplaceChosen').textContent = '';
+  document.getElementById('authReplaceSection').classList.toggle('d-none', action !== 'replace');
+  new bootstrap.Modal(document.getElementById('authRequestModal')).show();
+}
+document.getElementById('authRequestConfirm')?.addEventListener('click', async () => {
+  if (!_authUuid || !_authAction) return;
+  const btn = document.getElementById('authRequestConfirm');
+  if (_authAction === 'replace') {
+    const file = document.getElementById('authReplaceInput').files[0];
+    if (!file) { showToast('Please select a replacement file.', 'danger'); return; }
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('action_type', _authAction);
+  form.append('justification', document.getElementById('authJustification').value.trim());
+  if (_authAction === 'replace') {
+    form.append('file', document.getElementById('authReplaceInput').files[0]);
+  }
+  const r = await fetch(`/fim/change-request/${_authUuid}`, { method: 'POST', body: form });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-send me-1"></i>Send Request';
+  bootstrap.Modal.getInstance(document.getElementById('authRequestModal')).hide();
+  if (d.success) {
+    showToast(d.message || 'Authorization request sent.', 'info');
+  } else {
+    showToast(d.error || 'Request failed.', 'danger');
+  }
+});
+
+// ── SocketIO: change request update notifications ──
+if (typeof io !== 'undefined') {
+  const _sock = io();
+  _sock.on('change_request_update', data => {
+    const color = data.status === 'approved' ? 'success' : 'danger';
+    const icon  = data.status === 'approved' ? '✓' : '✗';
+    showToast(`${icon} Request #${data.request_id} ${data.status} by ${data.reviewer}.${data.note ? ' Note: ' + data.note : ''}`, color);
+    if (data.status === 'approved') setTimeout(() => location.reload(), 2000);
+  });
+  _sock.on('change_request', data => {
+    {% if current_user.is_admin %}
+    showToast(`New change request: ${data.requester} wants to ${data.action} "${data.filename}".`, 'warning');
+    {% endif %}
+  });
+}
 </script>
 {% endblock %}
