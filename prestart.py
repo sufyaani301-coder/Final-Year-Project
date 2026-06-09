@@ -18,6 +18,10 @@ import sys
 
 # Must be set before importing app so the startup DDL block is skipped.
 os.environ['SKIP_DB_INIT'] = '1'
+# Prevent eventlet.monkey_patch() from running during migration.
+# Without a running eventlet hub, monkey-patched threading semaphores deadlock
+# inside SQLAlchemy's connection pool, causing upgrade() to hang forever.
+os.environ['NO_EVENTLET_PATCH'] = '1'
 
 print("=== prestart: importing app ===", flush=True)
 try:

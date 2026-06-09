@@ -4,15 +4,18 @@
 # mypy: ignore-errors
 # type: ignore
 import eventlet
-eventlet.monkey_patch()
-# Patch psycopg2 to use eventlet-compatible green sockets (required for
-# non-blocking Postgres I/O under the eventlet hub).
-try:
-    import psycogreen.eventlet
-    psycogreen.eventlet.patch_psycopg()
-except ImportError:
-    pass
 import os
+# Only monkey-patch when actually running the server.
+# Skipped when NO_EVENTLET_PATCH=1 (set by prestart.py) so that SQLAlchemy's
+# connection-pool semaphores stay as real threading primitives — otherwise
+# they deadlock because there is no eventlet hub running during migrations.
+if not os.environ.get('NO_EVENTLET_PATCH'):
+    eventlet.monkey_patch()
+    try:
+        import psycogreen.eventlet
+        psycogreen.eventlet.patch_psycopg()
+    except Exception:
+        pass
 import re
 import secrets
 import uuid
