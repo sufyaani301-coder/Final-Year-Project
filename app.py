@@ -3,6 +3,7 @@
 # pylint: disable=all
 # mypy: ignore-errors
 # type: ignore
+print("=== app.py: start import ===", flush=True)
 import os
 import re
 import secrets
