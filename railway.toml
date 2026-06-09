@@ -2,6 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python prestart.py && python -u app.py"
+startCommand = "python -u start.py"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
