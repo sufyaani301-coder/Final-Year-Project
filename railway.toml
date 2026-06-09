@@ -2,6 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python prestart.py && python app.py"
+startCommand = "python prestart.py && gunicorn -c gunicorn.conf.py app:app"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10

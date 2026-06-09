@@ -1,9 +1,9 @@
 import os
 bind = f"0.0.0.0:{os.environ.get('PORT', '8080')}"
-worker_class = "eventlet"
-workers = 1
+worker_class = "gthread"
+workers = 2
+threads = 4
 timeout = 120
-loglevel = "debug"
-# Force gunicorn logs to stdout so Railway captures them in deploy logs.
+loglevel = "info"
 accesslog = "-"
 errorlog = "-"

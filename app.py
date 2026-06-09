@@ -3,14 +3,7 @@
 # pylint: disable=all
 # mypy: ignore-errors
 # type: ignore
-import eventlet
 import os
-# Only monkey-patch when actually running the server.
-# Skipped when NO_EVENTLET_PATCH=1 (set by prestart.py) so that SQLAlchemy's
-# connection-pool semaphores stay as real threading primitives — otherwise
-# they deadlock because there is no eventlet hub running during migrations.
-if not os.environ.get('NO_EVENTLET_PATCH'):
-    eventlet.monkey_patch()
 import re
 import secrets
 import uuid
@@ -114,7 +107,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db       = SQLAlchemy(app)
 migrate  = Migrate(app, db)
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth_login'
 login_manager.login_message = 'Please log in to access this page.'

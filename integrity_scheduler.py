@@ -1,25 +1,16 @@
 # ruff: noqa
 """
-integrity_scheduler.py — Eventlet greenthread-based FIM background jobs.
+integrity_scheduler.py — Background threads for periodic FIM scans.
 
-Replaces APScheduler with plain eventlet.sleep loops so the jobs cooperate
-with the eventlet hub naturally. Each greenthread sleeps first (giving the
-app time to warm up), then alternates between running its scan and sleeping
-for its interval.  DB I/O is non-blocking because psycogreen patches
-psycopg2 to use eventlet's hub for socket waiting.
-
-Three loops:
-  periodic_scan_loop   every 5 min  — files whose next_check_at has passed
-  recovery_scan_loop   every 15 min — files with an open alert
-  escalation_loop      every 1 hr   — auto-escalate stale high/critical alerts
+Three daemon threads run independently:
+  periodic_scan   every 5 min  — files whose next_check_at has passed
+  recovery_scan   every 15 min — files with an open alert
+  escalation      every 1 hr   — auto-escalate stale high/critical alerts
 """
-import eventlet
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 
-
-# ---------------------------------------------------------------------------
-# Job implementations (same logic as before)
-# ---------------------------------------------------------------------------
 
 def _periodic_scan(app_instance) -> None:
     with app_instance.app_context():
@@ -118,45 +109,41 @@ def _escalation_check(app_instance) -> None:
                 pass
 
 
-# ---------------------------------------------------------------------------
-# Public bootstrap
-# ---------------------------------------------------------------------------
-
 def start_scheduler(app_instance) -> None:
     """
-    Spawn three long-running eventlet greenthreads for FIM background jobs.
-    Each greenthread starts with an initial sleep so the first scan never
-    races with gunicorn's own startup I/O.
+    Spawn three daemon threads for FIM background jobs.
+    Each thread sleeps first (warm-up), then loops with time.sleep between runs.
+    Daemon=True means threads die automatically when the main process exits.
     """
 
     def periodic_scan_loop():
-        eventlet.sleep(30)          # 30 s warm-up
+        time.sleep(30)
         while True:
             try:
                 _periodic_scan(app_instance)
             except Exception as exc:
                 app_instance.logger.error('[FIM] periodic loop error: %s', exc)
-            eventlet.sleep(300)     # 5 min between runs
+            time.sleep(300)
 
     def recovery_scan_loop():
-        eventlet.sleep(60)          # 60 s warm-up
+        time.sleep(60)
         while True:
             try:
                 _recovery_scan(app_instance)
             except Exception as exc:
                 app_instance.logger.error('[FIM] recovery loop error: %s', exc)
-            eventlet.sleep(900)     # 15 min between runs
+            time.sleep(900)
 
     def escalation_loop():
-        eventlet.sleep(120)         # 2 min warm-up
+        time.sleep(120)
         while True:
             try:
                 _escalation_check(app_instance)
             except Exception as exc:
                 app_instance.logger.error('[FIM] escalation loop error: %s', exc)
-            eventlet.sleep(3600)    # 1 hr between runs
+            time.sleep(3600)
 
-    eventlet.spawn(periodic_scan_loop)
-    eventlet.spawn(recovery_scan_loop)
-    eventlet.spawn(escalation_loop)
-    app_instance.logger.info('[FIM] Scheduler started — 3 eventlet greenthread loops')
+    threading.Thread(target=periodic_scan_loop, daemon=True, name='fim-periodic').start()
+    threading.Thread(target=recovery_scan_loop, daemon=True, name='fim-recovery').start()
+    threading.Thread(target=escalation_loop, daemon=True, name='fim-escalation').start()
+    app_instance.logger.info('[FIM] Scheduler started — 3 background threads')
