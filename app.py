@@ -2459,4 +2459,6 @@ print("=== app.py: module load complete ===", flush=True)
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV', 'production') == 'development'
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, debug=debug, host='0.0.0.0', port=port)
+    print(f"=== starting socketio.run on port {port} ===", flush=True)
+    socketio.run(app, debug=debug, host='0.0.0.0', port=port,
+                 use_reloader=False, allow_unsafe_werkzeug=True)
