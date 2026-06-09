@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+{% block title %}Monitoring Policies — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">Monitoring Policies</span>
+      <button class="btn btn-primary btn-sm flex-shrink-0" data-bs-toggle="modal" data-bs-target="#createPolicyModal">
+        <i class="bi bi-plus-lg me-1"></i>New Policy
+      </button>
+      <button class="theme-toggle border-0 flex-shrink-0"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      {% if policies %}
+      <div class="row g-3">
+        {% for p in policies %}
+        <div class="col-md-6 col-xl-4">
+          <div class="chart-card h-100 {% if p.is_default %}border border-primary{% endif %}">
+            <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+              <div>
+                <h6 class="fw-bold mb-0">{{ p.name }}
+                  {% if p.is_default %}<span class="badge bg-primary ms-1" style="font-size:.65rem">Default</span>{% endif %}
+                  {% if not p.is_active %}<span class="badge bg-secondary ms-1" style="font-size:.65rem">Inactive</span>{% endif %}
+                </h6>
+                {% if p.description %}<p class="text-muted small mb-0">{{ p.description }}</p>{% endif %}
+              </div>
+              <div class="dropdown flex-shrink-0">
+                <button class="btn btn-sm btn-outline-secondary p-1" data-bs-toggle="dropdown"><i class="bi bi-three-dots-vertical"></i></button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><button class="dropdown-item small" onclick="openEditModal({{ p.id }})"><i class="bi bi-pencil me-2"></i>Edit</button></li>
+                  {% if not p.is_default %}
+                  <li><button class="dropdown-item small text-danger" onclick="deletePolicy({{ p.id }}, '{{ p.name | e }}')"><i class="bi bi-trash me-2"></i>Delete</button></li>
+                  {% endif %}
+                </ul>
+              </div>
+            </div>
+
+            <ul class="list-unstyled mb-0 small text-muted">
+              <li class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <span><i class="bi bi-clock me-1"></i>Check interval</span>
+                <strong>{{ p.interval_label }}</strong>
+              </li>
+              <li class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <span><i class="bi bi-shield-exclamation me-1"></i>Default severity</span>
+                <strong>{{ p.severity_default|upper }}</strong>
+              </li>
+              <li class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <span><i class="bi bi-bell me-1"></i>Email alerts</span>
+                <span>{% if p.email_alert %}<span class="text-success fw-semibold">On</span>{% else %}<span class="text-muted">Off</span>{% endif %}</span>
+              </li>
+              <li class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <span><i class="bi bi-broadcast me-1"></i>Real-time alerts</span>
+                <span>{% if p.socket_alert %}<span class="text-success fw-semibold">On</span>{% else %}<span class="text-muted">Off</span>{% endif %}</span>
+              </li>
+              <li class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <span><i class="bi bi-files me-1"></i>Files using policy</span>
+                <strong>{{ p.files.count() }}</strong>
+              </li>
+              <li class="d-flex justify-content-between py-1">
+                <span><i class="bi bi-calendar me-1"></i>Retention</span>
+                <strong>{{ p.retention_days }}d</strong>
+              </li>
+            </ul>
+
+            {% if p.excluded_list %}
+            <div class="mt-2">
+              <small class="text-muted">Excluded extensions: </small>
+              {% for ext in p.excluded_list %}<span class="badge bg-secondary me-1" style="font-size:.68rem">{{ ext }}</span>{% endfor %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-sliders display-3 opacity-50"></i>
+        <p class="mt-3">No policies configured yet.</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createPolicyModal">
+          <i class="bi bi-plus-lg me-1"></i>Create first policy
+        </button>
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+<!-- Create policy modal -->
+<div class="modal fade" id="createPolicyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>New Monitoring Policy</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="createPolicyBody">
+        <!-- filled by policyFormHtml() on DOMContentLoaded -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="createPolicy()"><i class="bi bi-save me-1"></i>Create Policy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit policy modal -->
+<div class="modal fade" id="editPolicyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Policy</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="editPolicyBody">
+        <!-- Filled by JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="saveEditPolicyBtn">Save changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// Pre-load policy data for edit modal
+const _policies = {
+{% for p in policies %}
+  {{ p.id }}: {
+    name: {{ p.name | tojson }},
+    description: {{ (p.description or '') | tojson }},
+    check_interval_mins: {{ p.check_interval_mins }},
+    alert_on_tamper: {{ 'true' if p.alert_on_tamper else 'false' }},
+    alert_on_missing: {{ 'true' if p.alert_on_missing else 'false' }},
+    alert_on_size_change: {{ 'true' if p.alert_on_size_change else 'false' }},
+    email_alert: {{ 'true' if p.email_alert else 'false' }},
+    socket_alert: {{ 'true' if p.socket_alert else 'false' }},
+    severity_default: {{ p.severity_default | tojson }},
+    retention_days: {{ p.retention_days }},
+    excluded_extensions: {{ p.excluded_extensions | tojson }},
+    is_default: {{ 'true' if p.is_default else 'false' }},
+  },
+{% endfor %}
+};
+
+function policyFormHtml(p={}) {
+  const sev = p.severity_default || 'high';
+  const interval = p.check_interval_mins || 60;
+  return `
+  <div class="mb-2">
+    <label class="form-label small fw-semibold">Name *</label>
+    <input type="text" name="name" class="form-control form-control-sm" value="${p.name||''}" required/>
+  </div>
+  <div class="mb-2">
+    <label class="form-label small fw-semibold">Description</label>
+    <input type="text" name="description" class="form-control form-control-sm" value="${p.description||''}"/>
+  </div>
+  <div class="row g-2 mb-2">
+    <div class="col-6">
+      <label class="form-label small fw-semibold">Check interval (minutes)</label>
+      <input type="number" name="check_interval_mins" class="form-control form-control-sm" value="${interval}" min="5" max="1440"/>
+    </div>
+    <div class="col-6">
+      <label class="form-label small fw-semibold">Default severity</label>
+      <select name="severity_default" class="form-select form-select-sm">
+        ${['info','low','medium','high','critical'].map(s=>`<option value="${s}" ${s===sev?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="mb-2">
+    <label class="form-label small fw-semibold">Retention (days)</label>
+    <input type="number" name="retention_days" class="form-control form-control-sm" value="${p.retention_days||365}" min="7"/>
+  </div>
+  <div class="mb-2">
+    <label class="form-label small fw-semibold">Excluded extensions (comma-separated)</label>
+    <input type="text" name="excluded_extensions" class="form-control form-control-sm" placeholder=".tmp,.log" value="${p.excluded_extensions||''}"/>
+  </div>
+  <div class="row g-2">
+    ${[
+      ['alert_on_tamper','Alert on tamper',p.alert_on_tamper!==false],
+      ['alert_on_missing','Alert on missing',p.alert_on_missing!==false],
+      ['alert_on_size_change','Alert on size change',p.alert_on_size_change===true],
+      ['email_alert','Email alerts',p.email_alert!==false],
+      ['socket_alert','Real-time alerts',p.socket_alert!==false],
+      ['is_default','Set as default policy',p.is_default===true],
+    ].map(([name,label,checked])=>`
+      <div class="col-6">
+        <div class="form-check form-check-sm">
+          <input class="form-check-input" type="checkbox" name="${name}" id="${name}_inp" value="1" ${checked?'checked':''}>
+          <label class="form-check-label small" for="${name}_inp">${label}</label>
+        </div>
+      </div>`).join('')}
+  </div>`;
+}
+
+function _formToData(formEl) {
+  const d = {};
+  for (const inp of formEl.querySelectorAll('input,select,textarea')) {
+    if (!inp.name) continue;
+    d[inp.name] = inp.type === 'checkbox' ? (inp.checked ? '1' : '0') : inp.value;
+  }
+  return d;
+}
+
+async function createPolicy() {
+  const body = document.getElementById('createPolicyBody');
+  const data = _formToData(body);
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  for (const [k,v] of Object.entries(data)) form.append(k,v);
+  const r = await fetch('/fim/policies/create', { method:'POST', body:form });
+  const d = await r.json();
+  if (d.success) {
+    bootstrap.Modal.getInstance(document.getElementById('createPolicyModal')).hide();
+    showToast(`Policy "${d.name}" created.`, 'success');
+    setTimeout(()=>location.reload(), 1000);
+  } else showToast(d.error || 'Create failed.', 'danger');
+}
+
+let _editPolicyId = null;
+function openEditModal(policyId) {
+  _editPolicyId = policyId;
+  const p = _policies[policyId] || {};
+  document.getElementById('editPolicyBody').innerHTML = policyFormHtml(p);
+  document.getElementById('saveEditPolicyBtn').onclick = savePolicy;
+  new bootstrap.Modal(document.getElementById('editPolicyModal')).show();
+}
+
+async function savePolicy() {
+  if (!_editPolicyId) return;
+  const body = document.getElementById('editPolicyBody');
+  const data = _formToData(body);
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  for (const [k,v] of Object.entries(data)) form.append(k,v);
+  const r = await fetch(`/fim/policies/${_editPolicyId}/update`, { method:'POST', body:form });
+  const d = await r.json();
+  if (d.success) {
+    bootstrap.Modal.getInstance(document.getElementById('editPolicyModal')).hide();
+    showToast('Policy saved.', 'success');
+    setTimeout(()=>location.reload(), 800);
+  } else showToast(d.error || 'Save failed.', 'danger');
+}
+
+async function deletePolicy(policyId, name) {
+  if (!confirm(`Delete policy "${name}"? Files using it will be unassigned.`)) return;
+  const form = new FormData(); form.append('csrf_token', CSRF);
+  const r = await fetch(`/fim/policies/${policyId}/delete`, { method:'POST', body:form });
+  const d = await r.json();
+  if (d.success) { showToast('Policy deleted.', 'info'); setTimeout(()=>location.reload(), 800); }
+  else showToast(d.error || 'Delete failed.', 'danger');
+}
+
+// Init create form
+document.getElementById('createPolicyBody').innerHTML = policyFormHtml();
+
+function showToast(message, type='info') {
+  const c = document.getElementById('toastContainer') || (() => {
+    const el = document.createElement('div'); el.id='toastContainer';
+    el.className='toast-container position-fixed bottom-0 end-0 p-3'; el.style.zIndex=1100;
+    document.body.appendChild(el); return el;
+  })();
+  const el = document.createElement('div');
+  el.className=`toast align-items-center text-white bg-${type} border-0`; el.setAttribute('role','alert');
+  el.innerHTML=`<div class="d-flex"><div class="toast-body">${message}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  c.appendChild(el); const t=new bootstrap.Toast(el,{delay:4000}); t.show();
+  el.addEventListener('hidden.bs.toast',()=>el.remove());
+}
+</script>
+{% endblock %}

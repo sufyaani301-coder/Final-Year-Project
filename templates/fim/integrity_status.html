@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+{% block title %}{{ file.original_name }} — Integrity Status{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <nav aria-label="breadcrumb" class="flex-grow-1">
+        <ol class="breadcrumb mb-0 small">
+          <li class="breadcrumb-item"><a href="{{ url_for('fim_monitoring') }}">Monitored Files</a></li>
+          <li class="breadcrumb-item active text-truncate" style="max-width:240px">{{ file.original_name }}</li>
+        </ol>
+      </nav>
+      <button class="theme-toggle border-0 flex-shrink-0"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- File header card -->
+      <div class="chart-card mb-4">
+        <div class="d-flex align-items-start gap-3 flex-wrap">
+          <div class="p-3 rounded-3" style="background:var(--surface-alt,var(--surface));flex-shrink:0">
+            <i class="bi {{ file.icon }} fs-2"></i>
+          </div>
+          <div class="flex-grow-1 min-w-0">
+            <h5 class="fw-bold mb-1 text-truncate" title="{{ file.original_name }}">{{ file.original_name }}</h5>
+            <div class="d-flex flex-wrap gap-3 small text-muted">
+              <span><i class="bi bi-hdd me-1"></i>{{ file.size_human }}</span>
+              <span><i class="bi bi-calendar me-1"></i>Uploaded {{ file.uploaded_at.strftime('%b %d, %Y') }}</span>
+              <span><i class="bi bi-person me-1"></i>{{ file.owner.full_name }}</span>
+              {% if file.last_checked_at %}
+              <span><i class="bi bi-clock me-1"></i>Last checked {{ file.last_checked_at.strftime('%b %d %H:%M') }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
+            {{ file.status_badge[0] | safe }}
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-info" onclick="runCheck('{{ file.uuid }}', this)">
+                <i class="bi bi-shield-check me-1"></i>Check Now
+              </button>
+              {% if current_user.is_admin %}
+              <button class="btn btn-sm btn-outline-warning"
+                      onclick="resetBaseline('{{ file.uuid }}', '{{ file.original_name | e }}')">
+                <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Baseline
+              </button>
+              {% endif %}
+              <a href="{{ url_for('download_file', file_uuid=file.uuid) }}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-download me-1"></i>Download
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-4">
+
+        <!-- Baseline info -->
+        <div class="col-md-5">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-fingerprint me-1"></i>Current Baseline</div>
+            {% if baseline %}
+            <dl class="row small mb-0">
+              <dt class="col-5 text-muted">SHA-256</dt>
+              <dd class="col-7 font-monospace text-break" style="font-size:.73rem">{{ baseline.sha256_hash }}</dd>
+              <dt class="col-5 text-muted">Size</dt>
+              <dd class="col-7">{{ '{:,}'.format(baseline.file_size_bytes) }} bytes</dd>
+              <dt class="col-5 text-muted">Captured</dt>
+              <dd class="col-7">{{ baseline.captured_at.strftime('%b %d, %Y %H:%M') }}</dd>
+              <dt class="col-5 text-muted">Reason</dt>
+              <dd class="col-7">{{ baseline.capture_reason.replace('_',' ').title() }}</dd>
+              {% if baseline.captured_by %}
+              <dt class="col-5 text-muted">By</dt>
+              <dd class="col-7">{{ baseline.captured_by.full_name }}</dd>
+              {% endif %}
+            </dl>
+            {% else %}
+            <div class="text-muted small text-center py-3">No baseline captured yet.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Open alerts -->
+        <div class="col-md-7">
+          <div class="chart-card h-100">
+            <div class="chart-card-title d-flex justify-content-between">
+              <span><i class="bi bi-bell me-1"></i>Alert History</span>
+              <a href="{{ url_for('fim_alerts', file_id=file.id) }}" class="btn btn-sm btn-outline-primary btn-xs">All alerts</a>
+            </div>
+            {% if alerts %}
+            <div class="table-responsive">
+              <table class="table table-sm mb-0" style="font-size:.82rem">
+                <thead><tr><th>Severity</th><th>Type</th><th>Status</th><th>Raised</th></tr></thead>
+                <tbody>
+                {% for a in alerts[:8] %}
+                <tr>
+                  <td><span class="badge {{ a.severity_class }}">{{ a.severity|upper }}</span></td>
+                  <td>{{ a.alert_type.replace('_',' ').title() }}</td>
+                  <td><span class="badge bg-secondary">{{ a.status }}</span></td>
+                  <td class="text-muted">{{ a.raised_at.strftime('%b %d %H:%M') }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="text-muted small text-center py-3"><i class="bi bi-shield-check text-success me-1"></i>No alerts for this file</div>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Check history -->
+      <div class="chart-card mt-4">
+        <div class="chart-card-title"><i class="bi bi-clock-history me-1"></i>Check History</div>
+        {% if checks.items %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" style="font-size:.84rem">
+            <thead class="table-light">
+              <tr><th>Date &amp; Time</th><th>Status</th><th>Triggered By</th><th>Duration</th><th>Hash (computed)</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+            {% for c in checks.items %}
+            <tr>
+              <td class="text-muted">{{ c.checked_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+              <td>
+                {% if c.status == 'ok' %}
+                  <span class="badge badge-ok">OK</span>
+                {% elif c.status == 'tampered' %}
+                  <span class="badge badge-tampered">TAMPERED</span>
+                {% elif c.status == 'missing' %}
+                  <span class="badge badge-missing">MISSING</span>
+                {% else %}
+                  <span class="badge bg-secondary">{{ c.status|upper }}</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge bg-secondary">{{ c.triggered_by }}</span>
+                {% if c.triggered_by_user %}<small class="text-muted ms-1">{{ c.triggered_by_user.full_name }}</small>{% endif %}
+              </td>
+              <td class="text-muted">{{ c.check_duration_ms }}ms</td>
+              <td class="font-monospace" style="font-size:.72rem">
+                {% if c.computed_sha256 %}{{ c.computed_sha256[:24] }}…{% else %}—{% endif %}
+              </td>
+              <td class="text-muted small">{{ c.error_message or '' }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if checks.pages > 1 %}
+        <nav class="mt-3 d-flex justify-content-center">
+          <ul class="pagination pagination-sm mb-0">
+            <li class="page-item {% if not checks.has_prev %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('fim_file_status', file_id=file.id, page=checks.prev_num) }}"><i class="bi bi-chevron-left"></i></a>
+            </li>
+            {% for p in checks.iter_pages() %}
+              {% if p %}<li class="page-item {% if p==checks.page %}active{% endif %}"><a class="page-link" href="{{ url_for('fim_file_status', file_id=file.id, page=p) }}">{{ p }}</a></li>
+              {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+            {% endfor %}
+            <li class="page-item {% if not checks.has_next %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('fim_file_status', file_id=file.id, page=checks.next_num) }}"><i class="bi bi-chevron-right"></i></a>
+            </li>
+          </ul>
+        </nav>
+        {% endif %}
+        {% else %}
+        <div class="text-center text-muted py-4 small">No checks recorded yet.</div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Reset baseline modal -->
+<div class="modal fade" id="resetBaselineModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2 text-warning"></i>Reset Baseline</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Accept current on-disk state as the new trusted baseline for <strong id="resetFileName"></strong>? Open alerts will be closed.</p>
+        <input type="text" id="resetNote" class="form-control form-control-sm" placeholder="Optional note"/>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning" id="resetBaselineConfirm">Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+async function runCheck(fileUuid, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Checking…';
+  const form = new FormData(); form.append('csrf_token', CSRF);
+  const r = await fetch(`/fim/check/${fileUuid}`, { method:'POST', body:form });
+  const d = await r.json();
+  btn.disabled = false; btn.innerHTML = orig;
+  showToast(d.message || d.status, d.status === 'ok' ? 'success' : 'warning');
+  if (d.success && d.status !== 'ok') setTimeout(()=>location.reload(), 1500);
+}
+
+let _resetUuid = null;
+function resetBaseline(fileUuid, fileName) {
+  _resetUuid = fileUuid;
+  document.getElementById('resetFileName').textContent = fileName;
+  document.getElementById('resetNote').value = '';
+  new bootstrap.Modal(document.getElementById('resetBaselineModal')).show();
+}
+document.getElementById('resetBaselineConfirm')?.addEventListener('click', async () => {
+  if (!_resetUuid) return;
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('note', document.getElementById('resetNote').value.trim());
+  const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
+  const d = await r.json();
+  bootstrap.Modal.getInstance(document.getElementById('resetBaselineModal')).hide();
+  showToast(d.message || d.error, d.success ? 'success' : 'danger');
+  if (d.success) setTimeout(()=>location.reload(), 1200);
+});
+
+function showToast(message, type='info') {
+  const c = document.getElementById('toastContainer') || (() => {
+    const el = document.createElement('div');
+    el.id='toastContainer'; el.className='toast-container position-fixed bottom-0 end-0 p-3'; el.style.zIndex=1100;
+    document.body.appendChild(el); return el;
+  })();
+  const el = document.createElement('div');
+  el.className=`toast align-items-center text-white bg-${type} border-0`; el.setAttribute('role','alert');
+  el.innerHTML=`<div class="d-flex"><div class="toast-body">${message}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  c.appendChild(el); const t=new bootstrap.Toast(el,{delay:5000}); t.show();
+  el.addEventListener('hidden.bs.toast',()=>el.remove());
+}
+</script>
+{% endblock %}

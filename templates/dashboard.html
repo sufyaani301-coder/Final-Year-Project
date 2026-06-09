@@ -1,72 +1,10 @@
 {% extends 'base.html' %}
-{% block title %}Dashboard — FileVault{% endblock %}
+{% block title %}Security Overview — FileVault{% endblock %}
 
 {% block body %}
 <div class="d-flex" id="wrapper">
 
-  <!-- ── Sidebar ── -->
-  <nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
-    <div class="sidebar-brand">
-      <i class="bi bi-shield-lock-fill"></i><span>FileVault</span>
-    </div>
-
-    <ul class="nav flex-column mt-3 flex-grow-1">
-      <li class="nav-item">
-        <a href="{{ url_for('dashboard', section='my_files') }}"
-           class="nav-link sidebar-link {% if section=='my_files' %}active{% endif %}">
-          <i class="bi bi-folder2-open me-2"></i>My Files
-          <span class="badge bg-primary ms-auto">{{ total_files }}</span>
-        </a>
-      </li>
-      <li class="nav-item">
-        <a href="{{ url_for('dashboard', section='shared_with_me') }}"
-           class="nav-link sidebar-link {% if section=='shared_with_me' %}active{% endif %}">
-          <i class="bi bi-people me-2"></i>Shared with me
-        </a>
-      </li>
-      <li class="nav-item">
-        <a href="{{ url_for('dashboard', section='recent') }}"
-           class="nav-link sidebar-link {% if section=='recent' %}active{% endif %}">
-          <i class="bi bi-clock-history me-2"></i>Recent
-        </a>
-      </li>
-      <li class="nav-item">
-        <a href="{{ url_for('activity_log') }}" class="nav-link sidebar-link">
-          <i class="bi bi-activity me-2"></i>Activity
-        </a>
-      </li>
-      <li class="nav-item">
-        <a href="{{ url_for('profile') }}" class="nav-link sidebar-link">
-          <i class="bi bi-gear me-2"></i>Settings
-        </a>
-      </li>
-      {% if current_user.is_admin %}
-      <li class="nav-item mt-2">
-        <hr class="sidebar-divider"/>
-        <a href="{{ url_for('admin_panel') }}" class="nav-link sidebar-link">
-          <i class="bi bi-shield-check me-2"></i>Admin
-        </a>
-      </li>
-      <li class="nav-item">
-        <a href="{{ url_for('admin_panel') }}#users" class="nav-link sidebar-link">
-          <i class="bi bi-people-fill me-2"></i>View Users
-        </a>
-      </li>
-      {% endif %}
-    </ul>
-
-    <div class="sidebar-footer">
-      <a href="{{ url_for('profile') }}" class="sidebar-user-link">
-        <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
-        <div class="lh-sm overflow-hidden flex-grow-1">
-          <div class="sidebar-user-name">{{ current_user.full_name }}</div>
-          <div class="sidebar-user-email">{{ current_user.email }}</div>
-        </div>
-        <i class="bi bi-chevron-right" style="color:rgba(255,255,255,.25);font-size:.7rem;flex-shrink:0"></i>
-      </a>
-    </div>
-  </nav>
-  <div class="sidebar-overlay"></div>
+  {% include '_sidebar.html' %}
 
   <!-- ── Main content ── -->
   <div class="main-content flex-grow-1 d-flex flex-column">
@@ -76,43 +14,15 @@
       <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
         <i class="bi bi-list fs-4"></i>
       </button>
-
-      <!-- Search -->
-      <form class="flex-grow-1" method="GET" action="{{ url_for('dashboard') }}">
-        <input type="hidden" name="section" value="{{ section }}"/>
-        <input type="hidden" name="sort"    value="{{ sort }}"/>
-        <input type="hidden" name="order"   value="{{ order }}"/>
-        <input type="hidden" name="type"    value="{{ type_filter }}"/>
-        <div class="input-group search-bar">
-          <span class="input-group-text bg-transparent border-end-0">
-            <i class="bi bi-search text-muted"></i>
-          </span>
-          <input type="text" name="q" class="form-control border-start-0 ps-0"
-                 placeholder="Search files…" value="{{ query }}"/>
-          {% if query %}
-          <a href="{{ url_for('dashboard', section=section) }}" class="btn btn-outline-secondary">
-            <i class="bi bi-x"></i>
-          </a>
-          {% endif %}
-        </div>
-      </form>
-
-      <!-- Upload button -->
-      <button class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0"
-              data-bs-toggle="modal" data-bs-target="#uploadModal">
-        <i class="bi bi-plus-lg"></i>
-        <span class="d-none d-sm-inline fw-semibold">Upload</span>
-      </button>
-
-      <!-- Theme toggle -->
+      <span class="fw-semibold flex-grow-1" style="font-size:1rem">Security Overview</span>
+      <a href="{{ url_for('fim_monitoring') }}" class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0">
+        <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload File</span>
+      </a>
       <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
         <i class="bi bi-moon-fill"></i>
       </button>
-
-      <!-- User menu -->
       <div class="dropdown flex-shrink-0">
-        <button class="btn p-0 border-0" data-bs-toggle="dropdown"
-                aria-label="User menu" aria-expanded="false">
+        <button class="btn p-0 border-0" data-bs-toggle="dropdown" aria-label="User menu">
           <div class="avatar-circle">{{ current_user.initials }}</div>
         </button>
         <ul class="dropdown-menu dropdown-menu-end" style="min-width:210px">
@@ -128,450 +38,163 @@
           <li><a class="dropdown-item" href="{{ url_for('admin_panel') }}"><i class="bi bi-shield-check me-2 opacity-60"></i>Admin Panel</a></li>
           {% endif %}
           <li><hr class="dropdown-divider my-1"/></li>
-          <li>
-            <a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)">
-              <i class="bi bi-box-arrow-right me-2"></i>Sign Out
-            </a>
-          </li>
+          <li><a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)"><i class="bi bi-box-arrow-right me-2"></i>Sign Out</a></li>
         </ul>
       </div>
     </nav>
 
-    <!-- Email verification banner -->
     {% if not current_user.email_verified %}
-    <div class="alert alert-info d-flex align-items-center gap-2 mb-0 rounded-0 border-0 border-bottom px-4 py-2" role="alert">
+    <div class="alert alert-info d-flex align-items-center gap-2 mb-0 rounded-0 border-0 border-bottom px-4 py-2">
       <i class="bi bi-envelope-exclamation-fill flex-shrink-0"></i>
       <span class="small">Please verify your email address. Check your inbox for a verification link.</span>
     </div>
     {% endif %}
 
-    <!-- Notification bar -->
+    <!-- FIM real-time notification bar -->
     <div id="notifBar" class="notif-bar align-items-center gap-2 px-4 py-2 d-none">
       <span class="notif-dot"></span>
       <span id="notifText" class="small"></span>
       <span id="notifTime" class="small text-muted ms-auto"></span>
-      <button class="btn btn-sm btn-link p-0 text-muted ms-2" onclick="hideNotif()" aria-label="Dismiss notification">
-        <i class="bi bi-x"></i>
-      </button>
+      <button class="btn btn-sm btn-link p-0 text-muted ms-2" onclick="hideNotif()"><i class="bi bi-x"></i></button>
     </div>
 
     <div class="content-area p-4 flex-grow-1">
 
-      <!-- Stats cards -->
+      <!-- ── Stats row ── -->
       <div class="row g-3 mb-4">
-        <div class="col-sm-4">
+        <div class="col-6 col-md-4 col-lg-2">
           <div class="stat-card">
-            <div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-files"></i></div>
-            <div>
-              <div class="stat-value">{{ total_files }}</div>
-              <div class="stat-label">Total Files</div>
-            </div>
+            <div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-shield"></i></div>
+            <div><div class="stat-value">{{ stats.total_monitored }}</div><div class="stat-label">Monitored</div></div>
           </div>
         </div>
-        <div class="col-sm-4">
+        <div class="col-6 col-md-4 col-lg-2">
           <div class="stat-card">
-            <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-hdd"></i></div>
-            <div>
-              <div class="stat-value">{{ total_size }}</div>
-              <div class="stat-label">Storage Used</div>
-            </div>
+            <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-shield-check"></i></div>
+            <div><div class="stat-value">{{ stats.ok }}</div><div class="stat-label">Healthy</div></div>
           </div>
         </div>
-        <div class="col-sm-4">
+        <div class="col-6 col-md-4 col-lg-2">
           <div class="stat-card">
-            <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-share"></i></div>
-            <div>
-              <div class="stat-value">{{ shared_count }}</div>
-              <div class="stat-label">Shared Files</div>
-            </div>
+            <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-shield-exclamation"></i></div>
+            <div><div class="stat-value">{{ stats.tampered }}</div><div class="stat-label">Tampered</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-file-earmark-x"></i></div>
+            <div><div class="stat-value">{{ stats.missing }}</div><div class="stat-label">Missing</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-secondary-subtle text-secondary"><i class="bi bi-hourglass-split"></i></div>
+            <div><div class="stat-value">{{ stats.pending }}</div><div class="stat-label">Pending</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card {% if stats.open_alerts > 0 %}border border-danger{% endif %}">
+            <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-bell"></i></div>
+            <div><div class="stat-value {% if stats.open_alerts > 0 %}text-danger{% endif %}">{{ stats.open_alerts }}</div><div class="stat-label">Open Alerts</div></div>
           </div>
         </div>
       </div>
 
-      <!-- ── Analytics charts ── -->
-      {% if section == 'my_files' or not section %}
-      {% if type_breakdown or week_counts %}
+      <!-- ── Charts row ── -->
       <div class="row g-3 mb-4">
-        <!-- Upload activity (7 days) -->
         <div class="col-md-8">
           <div class="chart-card h-100">
-            <div class="chart-card-title"><i class="bi bi-bar-chart-line me-1"></i>Upload Activity — Last 7 Days</div>
-            <canvas id="weekChart" height="90"></canvas>
+            <div class="chart-card-title"><i class="bi bi-bar-chart-line me-1"></i>Alert Trend — Last 7 Days</div>
+            <canvas id="trendChart" height="90"></canvas>
           </div>
         </div>
-        <!-- File type breakdown -->
         <div class="col-md-4">
           <div class="chart-card h-100">
-            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>Storage Breakdown</div>
-            {% if type_breakdown %}
-            <canvas id="typeChart" height="140"></canvas>
+            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>Open Alerts by Severity</div>
+            {% set total_sev = sev_counts.critical + sev_counts.high + sev_counts.medium + sev_counts.low + sev_counts.info %}
+            {% if total_sev > 0 %}
+            <canvas id="sevChart" height="140"></canvas>
             {% else %}
-            <div class="empty-state text-center py-4"><i class="bi bi-pie-chart fs-2 d-block mb-2"></i>No files yet</div>
+            <div class="empty-state text-center py-4 text-muted"><i class="bi bi-check-circle fs-2 d-block mb-2 text-success"></i>No open alerts</div>
             {% endif %}
           </div>
         </div>
       </div>
 
-      <script>
-      (function() {
-        const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-        const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
-        const labelColor = () => isDark() ? '#71717a' : '#6b7280';
-        const BLUE_PALETTE = ['#4f46e5','#6366f1','#818cf8','#a5b4fc','#c7d2fe','#7c3aed','#a78bfa'];
-
-        // Upload activity bar chart
-        const wCtx = document.getElementById('weekChart')?.getContext('2d');
-        if (wCtx) {
-          const weekChart = new Chart(wCtx, {
-            type: 'bar',
-            data: {
-              labels: {{ week_labels | tojson }},
-              datasets: [{
-                label: 'Uploads',
-                data: {{ week_counts | tojson }},
-                backgroundColor: 'rgba(79,70,229,.7)',
-                borderColor: '#4f46e5',
-                borderWidth: 1,
-                borderRadius: 6,
-              }]
-            },
-            options: {
-              responsive: true,
-              plugins: { legend: { display: false } },
-              scales: {
-                x: { grid: { color: gridColor() }, ticks: { color: labelColor() } },
-                y: { beginAtZero: true, precision: 0, grid: { color: gridColor() }, ticks: { color: labelColor() } }
-              }
-            }
-          });
-          document.querySelector('.theme-toggle')?.addEventListener('click', () => {
-            setTimeout(() => {
-              weekChart.options.scales.x.grid.color = gridColor();
-              weekChart.options.scales.x.ticks.color = labelColor();
-              weekChart.options.scales.y.grid.color = gridColor();
-              weekChart.options.scales.y.ticks.color = labelColor();
-              weekChart.update();
-            }, 50);
-          });
-        }
-
-        // File type doughnut chart
-        const tCtx = document.getElementById('typeChart')?.getContext('2d');
-        if (tCtx) {
-          const breakdown = {{ type_breakdown | tojson }};
-          new Chart(tCtx, {
-            type: 'doughnut',
-            data: {
-              labels: Object.keys(breakdown),
-              datasets: [{
-                data: Object.values(breakdown),
-                backgroundColor: BLUE_PALETTE,
-                borderWidth: 2,
-                borderColor: isDark() ? '#1f2937' : '#ffffff',
-              }]
-            },
-            options: {
-              responsive: true,
-              cutout: '62%',
-              plugins: {
-                legend: {
-                  position: 'bottom',
-                  labels: { color: labelColor(), font: { size: 11 }, boxWidth: 12, padding: 10 }
-                },
-                tooltip: {
-                  callbacks: {
-                    label: ctx => {
-                      const bytes = ctx.parsed;
-                      const sizes = ['B','KB','MB','GB'];
-                      let i = 0; let b = bytes;
-                      while (b >= 1024 && i < sizes.length-1) { b /= 1024; i++; }
-                      return ` ${ctx.label}: ${b.toFixed(1)} ${sizes[i]}`;
-                    }
-                  }
-                }
-              }
-            }
-          });
-        }
-      })();
-      </script>
-      {% endif %}
-      {% endif %}
-
-      <!-- Section heading + sort/filter toolbar -->
-      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <h6 class="fw-bold mb-0">
-          {% if section == 'shared_with_me' %}Shared with me
-          {% elif section == 'recent' %}Recent files
-          {% else %}My Files{% endif %}
-          {% if query %}<span class="text-muted fw-normal"> — "{{ query }}"</span>{% endif %}
-        </h6>
-
-        <div class="d-flex gap-2 flex-wrap">
-          <!-- Type filter -->
-          <form method="GET" action="{{ url_for('dashboard') }}" id="filterForm">
-            <input type="hidden" name="section" value="{{ section }}"/>
-            <input type="hidden" name="q"       value="{{ query }}"/>
-            <input type="hidden" name="sort"    value="{{ sort }}"/>
-            <input type="hidden" name="order"   value="{{ order }}"/>
-            <select name="type" class="form-select form-select-sm" style="width:auto"
-                    onchange="document.getElementById('filterForm').submit()"
-                    aria-label="Filter by file type">
-              <option value=""        {% if not type_filter %}selected{% endif %}>All types</option>
-              <option value="images"   {% if type_filter=='images'    %}selected{% endif %}>Images</option>
-              <option value="documents"{% if type_filter=='documents'  %}selected{% endif %}>Documents</option>
-              <option value="sheets"   {% if type_filter=='sheets'     %}selected{% endif %}>Spreadsheets</option>
-              <option value="media"    {% if type_filter=='media'      %}selected{% endif %}>Media</option>
-              <option value="archives" {% if type_filter=='archives'   %}selected{% endif %}>Archives</option>
-            </select>
-          </form>
-
-          <!-- Sort buttons -->
-          <div class="btn-group btn-group-sm" role="group" aria-label="Sort files">
-            {% for s, label in [('date','Date'),('name','Name'),('size','Size')] %}
-            {% set next_order = 'asc' if (sort == s and order == 'desc') else 'desc' %}
-            <a href="{{ url_for('dashboard', section=section, q=query, type=type_filter, sort=s, order=next_order) }}"
-               class="btn {% if sort == s %}btn-primary{% else %}btn-outline-secondary{% endif %}">
-              {{ label }}
-              {% if sort == s %}
-                <i class="bi bi-arrow-{% if order == 'asc' %}up{% else %}down{% endif %} ms-1"></i>
-              {% endif %}
-            </a>
-            {% endfor %}
-          </div>
-
-          {% if query %}
-          <a href="{{ url_for('dashboard', section=section) }}" class="btn btn-sm btn-outline-secondary">
-            Clear search
-          </a>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- Bulk select toolbar (hidden until files selected) -->
-      {% if section == 'my_files' or not section %}
-      <div id="bulkBar" class="d-none align-items-center gap-2 mb-3 p-2 rounded-3 border"
-           style="background:var(--surface);border-color:var(--brand)!important">
-        <input type="checkbox" id="selectAll" class="form-check-input mt-0" title="Select all">
-        <span class="small fw-semibold text-muted ms-1"><span id="selCount">0</span> selected</span>
-        <div class="ms-auto d-flex gap-2">
-          <button class="btn btn-sm btn-outline-primary" onclick="bulkDownload()" id="btnBulkDl" disabled>
-            <i class="bi bi-file-zip me-1"></i>Download ZIP
-          </button>
-          <button class="btn btn-sm btn-outline-danger" onclick="bulkDelete()" id="btnBulkDel" disabled>
-            <i class="bi bi-trash me-1"></i>Delete selected
-          </button>
-        </div>
-      </div>
-      {% endif %}
-
-      <!-- File list -->
-      {% set files = own_files if own_files else shared_files %}
-      {% if files %}
-      <div class="file-grid">
-        {% for file in files %}
-        <div class="file-card" id="file-{{ file.uuid }}">
-          <!-- Checkbox (own files only) -->
-          {% if file.user_id == current_user.id %}
-          <input type="checkbox" class="file-checkbox position-absolute m-2"
-                 style="z-index:10;top:0;left:0;width:16px;height:16px;cursor:pointer"
-                 data-uuid="{{ file.uuid }}" onclick="event.stopPropagation(); updateBulkBar()">
-          {% endif %}
-          <!-- Thumbnail / icon -->
-          <div class="file-thumb">
-            {% if file.is_image %}
-              <img src="{{ url_for('static', filename='uploads/' + file.stored_name) }}"
-                   alt="{{ file.original_name }}" class="file-preview-img"/>
+      <!-- ── Open alerts table ── -->
+      <div class="row g-3 mb-4">
+        <div class="col-lg-8">
+          <div class="chart-card">
+            <div class="chart-card-title d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-bell me-1"></i>Open Alerts</span>
+              <a href="{{ url_for('fim_alerts') }}" class="btn btn-sm btn-outline-primary">View all</a>
+            </div>
+            {% if open_alerts %}
+            <div class="table-responsive">
+              <table class="table table-sm mb-0" style="font-size:.84rem">
+                <thead><tr><th>Severity</th><th>File</th><th>Type</th><th>Raised</th><th></th></tr></thead>
+                <tbody>
+                {% for a in open_alerts %}
+                <tr>
+                  <td><span class="badge {{ a.severity_class }}">{{ a.severity|upper }}</span></td>
+                  <td class="text-truncate" style="max-width:180px" title="{{ a.file.original_name if a.file else '' }}">
+                    {% if a.file %}
+                    <a href="{{ url_for('fim_file_status', file_id=a.file_id) }}" class="text-decoration-none">{{ a.file.original_name }}</a>
+                    {% else %}—{% endif %}
+                  </td>
+                  <td><span class="text-muted">{{ a.alert_type.replace('_',' ').title() }}</span></td>
+                  <td class="text-muted">{{ a.raised_at.strftime('%b %d %H:%M') }}</td>
+                  <td>
+                    <button class="btn btn-xs btn-outline-success py-0 px-1"
+                            onclick="quickAck({{ a.id }}, this)" title="Acknowledge">
+                      <i class="bi bi-check2"></i>
+                    </button>
+                  </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
             {% else %}
-              <i class="bi {{ file.icon }} file-big-icon"></i>
-            {% endif %}
-            {% if file.is_shared %}
-              <span class="shared-badge"><i class="bi bi-share-fill me-1"></i>Shared</span>
-            {% endif %}
-          </div>
-
-          <!-- Meta -->
-          <div class="file-meta p-2">
-            <div class="file-name fw-semibold text-truncate" title="{{ file.original_name }}"
-                 id="fname-{{ file.uuid }}">
-              {{ file.original_name }}
+            <div class="empty-state text-center py-4 text-muted">
+              <i class="bi bi-shield-check fs-2 d-block mb-2 text-success"></i>No open alerts
             </div>
-            <div class="file-info text-muted small d-flex justify-content-between mt-1">
-              <span>{{ file.size_human }}</span>
-              <span>{{ file.uploaded_at.strftime('%b %d, %Y') }}</span>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="file-actions d-flex gap-1 p-2 border-top flex-wrap">
-            <!-- Open (password-protected preview) -->
-            <button class="btn btn-sm btn-outline-primary flex-fill" title="Open file"
-                    onclick="openPreviewPrompt('{{ file.uuid }}', '{{ file.original_name | e }}', '{{ file.mimetype }}')">
-              <i class="bi bi-eye"></i>
-            </button>
-
-            <a href="{{ url_for('download_file', file_uuid=file.uuid) }}"
-               class="btn btn-sm btn-outline-secondary flex-fill" title="Download">
-              <i class="bi bi-download"></i>
-            </a>
-
-            <!-- Verify integrity -->
-            {% if file.file_hash %}
-            <button class="btn btn-sm btn-outline-info flex-fill verify-btn" title="Verify File Integrity"
-                    onclick="verifyIntegrity('{{ file.uuid }}', this)">
-              <i class="bi bi-shield-check"></i>
-            </button>
-            {% endif %}
-
-            {% if file.user_id == current_user.id %}
-
-            <!-- Rename -->
-            <button class="btn btn-sm btn-outline-secondary flex-fill" title="Rename"
-                    data-bs-toggle="modal" data-bs-target="#renameModal{{ file.uuid | replace('-','') }}">
-              <i class="bi bi-pencil"></i>
-            </button>
-
-            <!-- Share with user -->
-            {% if all_users %}
-            <button class="btn btn-sm btn-outline-success flex-fill" title="Share with user"
-                    data-bs-toggle="modal" data-bs-target="#shareModal{{ file.id }}">
-              <i class="bi bi-person-plus"></i>
-            </button>
-            {% endif %}
-
-            <!-- Public link -->
-            <button class="btn btn-sm btn-outline-info flex-fill" title="Copy public link"
-                    onclick="openLinkModal('{{ file.uuid }}', {{ file.share_tokens | length }}, '{{ file.share_tokens[0].token if file.share_tokens else '' }}')">
-              <i class="bi bi-link-45deg"></i>
-            </button>
-
-            <!-- Delete -->
-            <button class="btn btn-sm btn-outline-danger" title="Delete"
-                    data-url="{{ url_for('delete_file', file_uuid=file.uuid) }}"
-                    onclick="ajaxDelete(this.dataset.url, document.getElementById('file-{{ file.uuid }}'))">
-              <i class="bi bi-trash"></i>
-            </button>
             {% endif %}
           </div>
         </div>
 
-        <!-- ── Rename modal ── -->
-        {% if file.user_id == current_user.id %}
-        <div class="modal fade" id="renameModal{{ file.uuid | replace('-','') }}" tabindex="-1">
-          <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-              <div class="modal-header">
-                <h6 class="modal-title"><i class="bi bi-pencil me-2"></i>Rename file</h6>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-              </div>
-              <div class="modal-body">
-                <label class="form-label small fw-semibold"
-                       for="renameInput{{ file.uuid | replace('-','') }}">New name</label>
-                <input type="text" class="form-control form-control-sm"
-                       id="renameInput{{ file.uuid | replace('-','') }}"
-                       value="{{ file.original_name }}"/>
-                <div class="invalid-feedback" id="renameError{{ file.uuid | replace('-','') }}"></div>
-              </div>
-              <div class="modal-footer">
-                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-sm btn-primary"
-                        onclick="doRename('{{ file.uuid }}', '{{ url_for('rename_file', file_uuid=file.uuid) }}')">
-                  Save
-                </button>
-              </div>
-            </div>
+        <!-- ── Recent checks ── -->
+        <div class="col-lg-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-clock-history me-1"></i>Recent Checks</div>
+            {% if recent_checks %}
+            <ul class="list-unstyled mb-0" style="font-size:.82rem">
+              {% for c in recent_checks %}
+              <li class="d-flex align-items-center gap-2 py-1 border-bottom" style="border-color:var(--border-color)!important">
+                <i class="bi {{ 'bi-shield-check text-success' if c.status == 'ok' else 'bi-shield-exclamation text-danger' if c.status == 'tampered' else 'bi-file-earmark-x text-warning' if c.status == 'missing' else 'bi-exclamation-triangle text-warning' }} flex-shrink-0"></i>
+                <span class="text-truncate flex-grow-1" title="{{ c.file.original_name if c.file else '' }}">
+                  {% if c.file %}<a href="{{ url_for('fim_file_status', file_id=c.file_id) }}" class="text-decoration-none">{{ c.file.original_name }}</a>{% else %}—{% endif %}
+                </span>
+                <small class="text-muted flex-shrink-0">{{ c.checked_at.strftime('%H:%M') }}</small>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <div class="text-center text-muted py-3 small">No checks yet</div>
+            {% endif %}
           </div>
         </div>
-
-        <!-- ── Share-with-user modal ── -->
-        {% if all_users %}
-        <div class="modal fade" id="shareModal{{ file.id }}" tabindex="-1">
-          <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-              <div class="modal-header">
-                <h6 class="modal-title">Share "{{ file.original_name[:30] }}"</h6>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-              </div>
-              <form method="POST" action="{{ url_for('share_file', file_uuid=file.uuid) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <div class="modal-body">
-                  <label class="form-label small fw-semibold"
-                         for="shareUser{{ file.id }}">Share with</label>
-                  <select id="shareUser{{ file.id }}" name="share_with_user_id"
-                          class="form-select form-select-sm" required>
-                    <option value="">— select user —</option>
-                    {% for u in all_users %}
-                    <option value="{{ u.id }}">{{ u.full_name }} ({{ u.email }})</option>
-                    {% endfor %}
-                  </select>
-                  {% if file.shares %}
-                  <div class="mt-2">
-                    <small class="text-muted">Already shared with:</small>
-                    {% for s in file.shares %}
-                    <div class="small">• {{ s.shared_with.full_name }}</div>
-                    {% endfor %}
-                  </div>
-                  {% endif %}
-                </div>
-                <div class="modal-footer">
-                  <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                  <button type="submit" class="btn btn-sm btn-success">Share</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-        {% endif %}
-        {% endif %}
-
-        {% endfor %}
       </div>
 
-      <!-- Pagination -->
-      {% if pagination.pages > 1 %}
-      <nav class="mt-4 d-flex justify-content-center" aria-label="File list pagination">
-        <ul class="pagination pagination-sm mb-0">
-          <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
-            <a class="page-link"
-               href="{{ url_for('dashboard', section=section, q=query, sort=sort, order=order, type=type_filter, page=pagination.prev_num) }}">
-              <i class="bi bi-chevron-left"></i>
-            </a>
-          </li>
-          {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
-            {% if p %}
-            <li class="page-item {% if p == pagination.page %}active{% endif %}">
-              <a class="page-link"
-                 href="{{ url_for('dashboard', section=section, q=query, sort=sort, order=order, type=type_filter, page=p) }}">
-                {{ p }}
-              </a>
-            </li>
-            {% else %}
-            <li class="page-item disabled"><span class="page-link">…</span></li>
-            {% endif %}
-          {% endfor %}
-          <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
-            <a class="page-link"
-               href="{{ url_for('dashboard', section=section, q=query, sort=sort, order=order, type=type_filter, page=pagination.next_num) }}">
-              <i class="bi bi-chevron-right"></i>
-            </a>
-          </li>
-        </ul>
-      </nav>
-      {% endif %}
-
-      {% else %}
-      <div class="empty-state text-center py-5">
-        <i class="bi bi-folder-x display-3 text-muted opacity-50"></i>
-        <p class="mt-3 text-muted">
-          {% if query %}No files match "{{ query }}".
-          {% elif section == 'shared_with_me' %}No files have been shared with you yet.
-          {% else %}No files yet. Upload your first file!{% endif %}
-        </p>
-        {% if section == 'my_files' and not query %}
-        <button class="btn btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#uploadModal">
-          <i class="bi bi-cloud-upload me-2"></i>Upload a file
-        </button>
-        {% endif %}
+      <!-- ── Severity breakdown pills ── -->
+      {% if stats.open_alerts > 0 %}
+      <div class="d-flex flex-wrap gap-2 mb-2">
+        {% for sev, count in sev_counts.items() %}{% if count > 0 %}
+        <a href="{{ url_for('fim_alerts', severity=sev) }}"
+           class="badge text-decoration-none {{ {'critical':'bg-danger','high':'badge-high','medium':'badge-warning text-dark','low':'badge-info text-dark','info':'bg-secondary'}.get(sev,'bg-secondary') }} px-3 py-2 fs-7">
+          {{ count }} {{ sev|upper }}
+        </a>
+        {% endif %}{% endfor %}
       </div>
       {% endif %}
 
@@ -579,698 +202,111 @@
   </div><!-- /main-content -->
 </div><!-- /wrapper -->
 
-<!-- ── Upload modal ── -->
-<div class="modal fade" id="uploadModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header border-0 pb-0">
-        <h5 class="modal-title fw-bold"><i class="bi bi-cloud-upload me-2 text-primary"></i>Upload File</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body" id="uploadBody">
-        <div class="upload-dropzone" id="dropZone">
-          <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
-          <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
-          <button type="button" class="btn btn-outline-primary btn-sm mt-1"
-                  onclick="document.getElementById('fileInput').click()">
-            Browse file
-          </button>
-          <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
-        </div>
-        <input type="file" name="file" id="fileInput" class="d-none"/>
-        <!-- Progress bar (hidden until upload starts) -->
-        <div id="uploadProgress" class="d-none mt-3">
-          <div class="d-flex justify-content-between small mb-1">
-            <span id="uploadProgressLabel">Uploading…</span>
-            <span id="uploadProgressPct">0%</span>
-          </div>
-          <div class="progress" style="height:8px">
-            <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
-                 style="width:0%"></div>
-          </div>
-        </div>
-        <div class="mt-2">
-          <small class="text-muted">
-            Allowed: images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3
-          </small>
-        </div>
-      </div>
-      <div class="modal-footer border-0 pt-0" id="uploadFooter">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="uploadBtn" onclick="startUpload()">
-          <i class="bi bi-upload me-2"></i>Upload
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Public share-link modal ── -->
-<div class="modal fade" id="linkModal" tabindex="-1">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title"><i class="bi bi-link-45deg me-2"></i>Public Share Link</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div id="linkExisting" class="d-none">
-          <label class="form-label small fw-semibold">Active link</label>
-          <div class="input-group input-group-sm">
-            <input type="text" id="linkUrl" class="form-control font-monospace" readonly/>
-            <button class="btn btn-outline-secondary" onclick="copyLink()" title="Copy link" type="button">
-              <i class="bi bi-clipboard" id="linkCopyIcon"></i>
-            </button>
-          </div>
-          <button class="btn btn-sm btn-outline-danger mt-2 w-100" onclick="deleteLink()" type="button">
-            <i class="bi bi-trash me-1"></i>Revoke link
-          </button>
-        </div>
-        <div id="linkCreate">
-          <p class="small text-muted mb-2">Anyone with the link can download this file.</p>
-          <label class="form-label small fw-semibold" for="linkExpiry">Expires in</label>
-          <select id="linkExpiry" class="form-select form-select-sm mb-3">
-            <option value="">Never</option>
-            <option value="1">1 day</option>
-            <option value="7">7 days</option>
-            <option value="30">30 days</option>
-          </select>
-          <button class="btn btn-sm btn-info w-100 text-white" onclick="createLink()" type="button">
-            <i class="bi bi-link-45deg me-1"></i>Generate link
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Session timeout modal ── -->
-<div class="modal fade" id="sessionTimeoutModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header border-0 pb-0">
-        <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2 text-warning"></i>Session Expiring</h6>
-      </div>
-      <div class="modal-body text-center py-3">
-        <p class="text-muted small mb-2">Your session will expire in</p>
-        <output id="timeoutCountdown" aria-live="polite" aria-atomic="true">120</output>
-        <p class="text-muted small mt-2 mb-0">seconds due to inactivity.</p>
-      </div>
-      <div class="modal-footer border-0 pt-0">
-        <button type="button" class="btn btn-primary w-100" id="stayLoggedIn">
-          <i class="bi bi-shield-check me-1"></i>Stay Logged In
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Preview password modal ── -->
-<div class="modal fade" id="previewPasswordModal" tabindex="-1" aria-labelledby="previewPasswordModalLabel">
-  <div class="modal-dialog modal-dialog-centered" style="max-width:380px">
-    <div class="modal-content">
-      <div class="modal-header border-0 pb-0">
-        <div class="d-flex align-items-center gap-2">
-          <div style="width:36px;height:36px;border-radius:10px;background:var(--brand);opacity:.12;position:absolute"></div>
-          <i class="bi bi-lock-fill" style="color:var(--brand);font-size:1.1rem;position:relative"></i>
-          <h6 class="modal-title fw-bold mb-0" id="previewPasswordModalLabel">Open File</h6>
-        </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body pt-3">
-        <p class="text-muted small mb-3" id="previewPwdDesc">Enter your account password to open this file securely.</p>
-        <div class="input-group">
-          <span class="input-group-text"><i class="bi bi-key"></i></span>
-          <input type="password" id="previewPwdInput" class="form-control"
-                 placeholder="Your account password" autocomplete="current-password"
-                 onkeydown="if(event.key==='Enter') submitPreviewPassword()"/>
-          <button type="button" class="btn btn-outline-secondary"
-                  onclick="const f=document.getElementById('previewPwdInput');const s=f.type==='password';f.type=s?'text':'password';this.querySelector('i').className=s?'bi bi-eye-slash':'bi bi-eye'">
-            <i class="bi bi-eye"></i>
-          </button>
-        </div>
-        <div id="previewPwdError" class="alert alert-danger d-none small mt-2 mb-0 py-2"></div>
-      </div>
-      <div class="modal-footer border-0 pt-0">
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary fw-semibold btn-sm px-4" id="previewPwdSubmit"
-                onclick="submitPreviewPassword()">
-          <i class="bi bi-eye me-1"></i>Open
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── File preview modal ── -->
-<div class="modal fade" id="filePreviewModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-xl" style="max-width:min(1100px,95vw)">
-    <div class="modal-content" style="max-height:90vh;display:flex;flex-direction:column">
-      <div class="modal-header border-0 pb-2">
-        <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
-          <i class="bi bi-file-earmark-text" id="previewModalIcon" style="color:var(--brand);font-size:1.1rem;flex-shrink:0"></i>
-          <h6 class="modal-title fw-bold mb-0 text-truncate" id="previewModalTitle" aria-live="polite">File Preview</h6>
-        </div>
-        <button type="button" class="btn-close ms-2" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body p-0 flex-grow-1 overflow-auto d-flex flex-column align-items-center justify-content-center"
-           id="previewModalBody" style="min-height:320px;background:var(--surface)">
-        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
-      </div>
-      <div class="modal-footer border-0 pt-2 justify-content-between">
-        <small class="text-muted" id="previewModalMeta"></small>
-        <a id="previewDownloadBtn" href="#" class="btn btn-sm btn-outline-primary fw-semibold">
-          <i class="bi bi-download me-1"></i>Download
-        </a>
-      </div>
-    </div>
-  </div>
-</div>
-
-
 <script>
-document.querySelectorAll('.toast').forEach(t =>
-  setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
+(function(){
+  const isDark    = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+  const labelColor = () => isDark() ? '#71717a' : '#6b7280';
 
-// ── Drag & drop ──
-const dz = document.getElementById('dropZone');
-const fi = document.getElementById('fileInput');
-if (dz) {
-  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-  dz.addEventListener('drop', e => {
-    e.preventDefault();
-    dz.classList.remove('dragover');
-    if (e.dataTransfer.files.length) {
-      fi.files = e.dataTransfer.files;
-      showFileName(fi);
-    }
-  });
-  fi.addEventListener('change', () => showFileName(fi));
-}
-function showFileName(input) {
-  const name = input.files[0]?.name || '';
-  document.getElementById('fileChosenName').textContent = name ? `Selected: ${name}` : '';
-}
-
-// ── AJAX upload with progress bar ──
-const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
-
-async function startUpload() {
-  const file = fi.files[0];
-  if (!file) { alert('Please select a file first.'); return; }
-
-  const btn = document.getElementById('uploadBtn');
-  btn.disabled = true;
-  document.getElementById('uploadProgress').classList.remove('d-none');
-
-  const form = new FormData();
-  form.append('file', file);
-  form.append('csrf_token', CSRF);
-
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '{{ url_for("upload_file") }}');
-  xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-
-  xhr.upload.onprogress = e => {
-    if (e.lengthComputable) {
-      const pct = Math.round(e.loaded / e.total * 100);
-      document.getElementById('uploadProgressBar').style.width = pct + '%';
-      document.getElementById('uploadProgressPct').textContent = pct + '%';
-    }
-  };
-
-  xhr.onload = () => {
-    const data = JSON.parse(xhr.responseText);
-    const modal = bootstrap.Modal.getInstance(document.getElementById('uploadModal'));
-    modal.hide();
-    btn.disabled = false;
-    document.getElementById('uploadProgress').classList.add('d-none');
-    document.getElementById('uploadProgressBar').style.width = '0%';
-    fi.value = '';
-    document.getElementById('fileChosenName').textContent = '';
-
-    if (data.success) {
-      showToast(`"${data.file.original_name}" uploaded successfully.`, 'success');
-    } else {
-      showToast(data.error || 'Upload failed.', 'danger');
-    }
-  };
-
-  xhr.onerror = () => {
-    btn.disabled = false;
-    showToast('Network error. Please try again.', 'danger');
-  };
-
-  xhr.send(form);
-}
-
-// ── In-page toast ──
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toastContainer') || (() => {
-    const c = document.createElement('div');
-    c.id = 'toastContainer';
-    c.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-    c.style.zIndex = 1100;
-    document.body.appendChild(c);
-    return c;
-  })();
-
-  const el = document.createElement('div');
-  el.className = `toast align-items-center text-white bg-${type} border-0`;
-  el.setAttribute('role', 'alert');
-  el.innerHTML = `
-    <div class="d-flex">
-      <div class="toast-body">${message}</div>
-      <button type="button" class="btn-close btn-close-white me-2 m-auto"
-              data-bs-dismiss="toast" aria-label="Close"></button>
-    </div>`;
-  container.appendChild(el);
-  const t = new bootstrap.Toast(el, { delay: 4000 });
-  t.show();
-  el.addEventListener('hidden.bs.toast', () => el.remove());
-}
-
-// ── Socket.IO real-time notifications ──
-const socket = io();
-const notifBar  = document.getElementById('notifBar');
-const notifText = document.getElementById('notifText');
-const notifTime = document.getElementById('notifTime');
-
-const icons = { upload: '⬆️', delete: '🗑️', share: '🔗' };
-
-socket.on('file_event', data => {
-  const icon = icons[data.type] || '📁';
-  notifText.textContent = `${icon} ${data.message}`;
-  notifTime.textContent  = data.timestamp;
-  notifBar.classList.remove('d-none');
-  notifBar.classList.add('d-flex');
-  clearTimeout(globalThis._notifTimer);
-  globalThis._notifTimer = setTimeout(hideNotif, 6000);
-  // Reload on delete/share events from other sessions only (upload is handled via AJAX now)
-  if (data.type === 'delete' || data.type === 'share') {
-    setTimeout(() => location.reload(), 1500);
-  }
-});
-
-function hideNotif() {
-  notifBar.classList.remove('d-flex');
-  notifBar.classList.add('d-none');
-}
-
-// ── Rename ──
-function doRename(fileUuid, url) {
-  const safeid = fileUuid.replaceAll('-', '');
-  const input  = document.getElementById('renameInput' + safeid);
-  const errEl  = document.getElementById('renameError' + safeid);
-  const newName = input.value.trim();
-  if (!newName) { input.classList.add('is-invalid'); errEl.textContent = 'Name cannot be empty.'; return; }
-
-  const form = new FormData();
-  form.append('name', newName);
-  form.append('csrf_token', CSRF);
-
-  fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: form })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        document.getElementById('fname-' + fileUuid).textContent = data.name;
-        document.getElementById('renameInput' + safeid).value = data.name;
-        bootstrap.Modal.getInstance(document.getElementById('renameModal' + safeid)).hide();
-        showToast(`Renamed to "${data.name}".`, 'success');
-      } else {
-        input.classList.add('is-invalid');
-        errEl.textContent = data.error || 'Rename failed.';
+  // Trend chart
+  const tCtx = document.getElementById('trendChart')?.getContext('2d');
+  if (tCtx) {
+    const tChart = new Chart(tCtx, {
+      type: 'bar',
+      data: {
+        labels:   {{ trend_labels | tojson }},
+        datasets: [{ label:'Alerts', data: {{ trend_counts | tojson }},
+          backgroundColor:'rgba(239,68,68,.65)', borderColor:'#ef4444',
+          borderWidth:1, borderRadius:5 }]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ grid:{ color:gridColor() }, ticks:{ color:labelColor() } },
+          y:{ beginAtZero:true, precision:0, grid:{ color:gridColor() }, ticks:{ color:labelColor() } }
+        }
       }
     });
-}
-
-// ── Public share links ──
-let _currentFileUuid = null;
-let _currentToken    = null;
-
-function openLinkModal(fileUuid, hasTokens, existingToken) {
-  _currentFileUuid = fileUuid;
-  _currentToken    = existingToken || null;
-  if (hasTokens && existingToken) {
-    // Build URL client-side so it always matches the real route (/s/<token>)
-    const url = window.location.origin + '/s/' + existingToken;
-    document.getElementById('linkUrl').value = url;
-    document.getElementById('linkExisting').classList.remove('d-none');
-    document.getElementById('linkCreate').classList.add('d-none');
-  } else {
-    document.getElementById('linkExisting').classList.add('d-none');
-    document.getElementById('linkCreate').classList.remove('d-none');
-  }
-  new bootstrap.Modal(document.getElementById('linkModal')).show();
-}
-
-async function createLink() {
-  const days = document.getElementById('linkExpiry').value;
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  if (days) form.append('expires_days', days);
-
-  const r    = await fetch(`/share-link/create/${_currentFileUuid}`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    body: form,
-  });
-  const data = await r.json();
-  if (data.success) {
-    _currentToken = data.token;
-    document.getElementById('linkUrl').value = data.link;
-    document.getElementById('linkCreate').classList.add('d-none');
-    document.getElementById('linkExisting').classList.remove('d-none');
-  }
-}
-
-function copyLink() {
-  const text = document.getElementById('linkUrl').value;
-  const icon = document.getElementById('linkCopyIcon');
-  if (!text) return;
-
-  function markCopied() {
-    icon.className = 'bi bi-check2 text-success';
-    setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 2500);
-    showToast('Link copied!', 'success');
+    document.querySelector('.theme-toggle')?.addEventListener('click', ()=>setTimeout(()=>{
+      tChart.options.scales.x.grid.color = gridColor();
+      tChart.options.scales.x.ticks.color = labelColor();
+      tChart.options.scales.y.grid.color = gridColor();
+      tChart.options.scales.y.ticks.color = labelColor();
+      tChart.update();
+    }, 50));
   }
 
-  // Always use a transient textarea so selection works on every browser/OS/iOS
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.setAttribute('readonly', '');
-  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
-  document.body.appendChild(ta);
-  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
-
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text)
-      .then(() => { ta.remove(); markCopied(); })
-      .catch(() => {
-        const ok = (() => { try { return document.execCommand('copy'); } catch(_){return false;} })();
-        ta.remove();
-        ok ? markCopied() : showToast('Long-press the link and choose Copy.', 'warning');
-      });
-  } else {
-    const ok = (() => { try { return document.execCommand('copy'); } catch(_){return false;} })();
-    ta.remove();
-    ok ? markCopied() : showToast('Long-press the link and choose Copy.', 'warning');
-  }
-}
-
-
-async function deleteLink() {
-  if (!_currentToken) return;
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  await fetch(`/share-link/delete/${_currentToken}`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    body: form,
-  });
-  bootstrap.Modal.getInstance(document.getElementById('linkModal')).hide();
-  showToast('Public link revoked.', 'info');
-}
-
-// ── SHA-256 File Integrity Verification ────────────────────
-async function verifyIntegrity(fileUuid, btn) {
-  btn.disabled = true;
-  const origHtml = btn.innerHTML;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-  try {
-    const r = await fetch(`/verify/${fileUuid}`, {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  // Severity doughnut
+  const sCtx = document.getElementById('sevChart')?.getContext('2d');
+  if (sCtx) {
+    const sevData = {{ sev_counts | tojson }};
+    new Chart(sCtx, {
+      type:'doughnut',
+      data:{
+        labels: Object.keys(sevData).map(s=>s.charAt(0).toUpperCase()+s.slice(1)),
+        datasets:[{
+          data: Object.values(sevData),
+          backgroundColor:['#ef4444','#f97316','#f59e0b','#3b82f6','#6b7280'],
+          borderWidth:2,
+          borderColor: isDark() ? '#1f2937' : '#ffffff',
+        }]
+      },
+      options:{
+        responsive:true, cutout:'60%',
+        plugins:{
+          legend:{ position:'bottom', labels:{ color:labelColor(), font:{size:11}, boxWidth:12, padding:8 } }
+        }
+      }
     });
-    const data = await r.json();
-    if (data.intact === null) {
-      btn.innerHTML = '<i class="bi bi-shield-slash"></i>';
-      btn.title = data.error || 'No hash stored for this file.';
-    } else if (data.intact) {
-      btn.innerHTML = '<i class="bi bi-shield-check integrity-ok"></i>';
-      btn.title = 'Integrity verified — file is unmodified ✓';
-      btn.classList.replace('btn-outline-info', 'btn-outline-success');
-    } else {
-      btn.innerHTML = '<i class="bi bi-shield-exclamation integrity-fail"></i>';
-      btn.title = '⚠ WARNING: File hash mismatch — possible tampering!';
-      btn.classList.replace('btn-outline-info', 'btn-outline-danger');
-      alert('⚠ Integrity check FAILED!\n\nThis file\'s hash does not match what was stored on upload. It may have been tampered with.');
-    }
-    btn.disabled = false;
-    setTimeout(() => {
-      btn.innerHTML = origHtml;
-      btn.classList.replace('btn-outline-success', 'btn-outline-info');
-      btn.classList.replace('btn-outline-danger', 'btn-outline-info');
-      btn.title = 'Verify File Integrity';
-    }, 6000);
-  } catch {
-    btn.innerHTML = origHtml;
-    btn.disabled = false;
+  }
+})();
+
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+const socket = io();
+
+// Quick acknowledge from dashboard
+async function quickAck(alertId, btn) {
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  const r = await fetch(`/fim/alerts/${alertId}/acknowledge`, { method:'POST', body:form });
+  const d = await r.json();
+  if (d.success) {
+    const row = btn.closest('tr');
+    if (row) { row.style.opacity='.4'; setTimeout(()=>row.remove(), 500); }
   }
 }
 
-// ── Security alert listener ────────────────────────────────
-socket.on('security_alert', data => {
+// Real-time FIM alert toast
+socket.on('integrity_alert', data => {
   const div = document.createElement('div');
   div.className = 'alert alert-danger alert-dismissible fade show security-alert-toast';
   div.innerHTML = `<i class="bi bi-shield-exclamation-fill me-2"></i>
-    <strong>Security Alert!</strong> ${data.message}
-    <br><small class="opacity-75">IP: ${data.ip} &nbsp;·&nbsp; ${data.timestamp}</small>
+    <strong>[${(data.severity||'').toUpperCase()}] Integrity Alert!</strong> ${data.title || data.filename}
+    <br><small class="opacity-75">${data.raised_at||''}</small>
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
   document.body.appendChild(div);
-  setTimeout(() => div.remove(), 12000);
+  setTimeout(() => div.remove(), 15000);
 });
 
-// ── Session auto-timeout ────────────────────────────────────
-const _IDLE_MS    = 15 * 60 * 1000;  // 15 min total
-const _WARN_MS    = 2  * 60 * 1000;  // warn 2 min before
-let _idleTimer, _warnTimer, _countdownInterval;
-const _timeoutModal = new bootstrap.Modal(document.getElementById('sessionTimeoutModal'));
-
-function _resetIdle() {
-  clearTimeout(_idleTimer);
-  clearTimeout(_warnTimer);
-  clearInterval(_countdownInterval);
-  _warnTimer = setTimeout(_showTimeoutWarning, _IDLE_MS - _WARN_MS);
-  _idleTimer = setTimeout(() => { globalThis.location.href = '/auth/logout'; }, _IDLE_MS);
-}
-
-function _showTimeoutWarning() {
-  let secs = Math.round(_WARN_MS / 1000);
-  document.getElementById('timeoutCountdown').textContent = secs;
-  _timeoutModal.show();
-  _countdownInterval = setInterval(() => {
-    secs--;
-    document.getElementById('timeoutCountdown').textContent = secs;
-    if (secs <= 0) { clearInterval(_countdownInterval); globalThis.location.href = '/auth/logout'; }
-  }, 1000);
-}
-
-document.getElementById('stayLoggedIn')?.addEventListener('click', () => {
-  clearInterval(_countdownInterval);
-  _timeoutModal.hide();
-  _resetIdle();
+socket.on('file_event', data => {
+  const notifBar  = document.getElementById('notifBar');
+  const notifText = document.getElementById('notifText');
+  const notifTime = document.getElementById('notifTime');
+  if (!notifBar) return;
+  notifText.textContent = data.message;
+  notifTime.textContent = data.timestamp;
+  notifBar.classList.remove('d-none');
+  notifBar.classList.add('d-flex');
+  clearTimeout(window._notifTimer);
+  window._notifTimer = setTimeout(hideNotif, 6000);
 });
 
-['mousemove','keydown','click','scroll','touchstart'].forEach(ev =>
-  document.addEventListener(ev, _resetIdle, { passive: true }));
-_resetIdle();
-
-// ── Bulk file actions ──────────────────────────────────────
-function _selectedUuids() {
-  return [...document.querySelectorAll('.file-checkbox:checked')].map(cb => cb.dataset.uuid);
+function hideNotif() {
+  const nb = document.getElementById('notifBar');
+  if (nb) { nb.classList.remove('d-flex'); nb.classList.add('d-none'); }
 }
 
-function updateBulkBar() {
-  const bar   = document.getElementById('bulkBar');
-  const count = _selectedUuids().length;
-  if (!bar) return;
-  if (count > 0) {
-    bar.classList.remove('d-none');
-    bar.classList.add('d-flex');
-  } else {
-    bar.classList.add('d-none');
-    bar.classList.remove('d-flex');
-  }
-  document.getElementById('selCount').textContent = count;
-  document.getElementById('btnBulkDl').disabled  = count === 0;
-  document.getElementById('btnBulkDel').disabled = count === 0;
-}
-
-document.getElementById('selectAll')?.addEventListener('change', function () {
-  document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = this.checked);
-  updateBulkBar();
-});
-
-async function bulkDelete() {
-  const uuids = _selectedUuids();
-  if (!uuids.length) return;
-  if (!confirm(`Delete ${uuids.length} file(s)? This cannot be undone.`)) return;
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  uuids.forEach(u => form.append('uuids', u));
-  const r = await fetch('/bulk-delete', { method: 'POST', body: form });
-  const data = await r.json();
-  if (data.success) {
-    uuids.forEach(u => {
-      const card = document.getElementById(`file-${u}`);
-      if (card) { card.classList.add('deleting'); setTimeout(() => card.remove(), 350); }
-    });
-    updateBulkBar();
-  }
-}
-
-async function bulkDownload() {
-  const uuids = _selectedUuids();
-  if (!uuids.length) return;
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  uuids.forEach(u => form.append('uuids', u));
-  const r    = await fetch('/bulk-download', { method: 'POST', body: form });
-  const blob = await r.blob();
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = r.headers.get('Content-Disposition')?.match(/filename=(.+)/)?.[1] || 'files.zip';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-}
-
-// ── File preview (password-protected) ──────────────────────────────────────
-let _pvUuid = '', _pvMime = '', _pvName = '', _pvDownloadUrl = '';
-
-function openPreviewPrompt(uuid, name, mime) {
-  _pvUuid = uuid;
-  _pvMime = mime || '';
-  _pvName = name;
-  _pvDownloadUrl = '/download/' + uuid;
-
-  const inp = document.getElementById('previewPwdInput');
-  const err = document.getElementById('previewPwdError');
-  const btn = document.getElementById('previewPwdSubmit');
-  inp.value = '';
-  err.classList.add('d-none');
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
-  document.getElementById('previewPwdDesc').textContent =
-    'Enter your account password to open “' + name + '” securely.';
-
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('previewPasswordModal')).show();
-  setTimeout(() => inp.focus(), 350);
-}
-
-async function submitPreviewPassword() {
-  const inp  = document.getElementById('previewPwdInput');
-  const err  = document.getElementById('previewPwdError');
-  const btn  = document.getElementById('previewPwdSubmit');
-  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-
-  err.classList.add('d-none');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verifying…';
-
-  try {
-    const res  = await fetch('/preview-auth/' + _pvUuid, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest' },
-      body:    JSON.stringify({ password: inp.value }),
-    });
-    const data = await res.json();
-
-    if (data.success) {
-      bootstrap.Modal.getInstance(document.getElementById('previewPasswordModal')).hide();
-      openFilePreview(data.preview_url, data.mimetype, data.filename);
-    } else {
-      err.textContent = data.error || 'Incorrect password.';
-      err.classList.remove('d-none');
-      inp.value = '';
-      inp.focus();
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
-    }
-  } catch {
-    err.textContent = 'Network error. Please try again.';
-    err.classList.remove('d-none');
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-eye me-1"></i>Open';
-  }
-}
-
-function openFilePreview(url, mime, name) {
-  const body  = document.getElementById('previewModalBody');
-  const title = document.getElementById('previewModalTitle');
-  const meta  = document.getElementById('previewModalMeta');
-  const dlBtn = document.getElementById('previewDownloadBtn');
-
-  title.textContent = name;
-  meta.textContent  = mime || '';
-  dlBtn.href        = _pvDownloadUrl;
-  body.innerHTML    = '';
-
-  const m = mime || '';
-
-  if (m.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src   = url;
-    img.alt   = name;
-    img.style.cssText = 'max-width:100%;max-height:70vh;object-fit:contain;display:block';
-    body.style.padding = '1.5rem';
-    body.appendChild(img);
-
-  } else if (m === 'application/pdf') {
-    const frame = document.createElement('iframe');
-    frame.src   = url;
-    frame.title = name;
-    frame.style.cssText = 'width:100%;height:72vh;border:none;display:block';
-    body.style.padding = '0';
-    body.appendChild(frame);
-
-  } else if (m.startsWith('video/')) {
-    const vid = document.createElement('video');
-    vid.src     = url;
-    vid.controls = true;
-    vid.style.cssText = 'max-width:100%;max-height:70vh;display:block';
-    body.style.padding = '1.5rem';
-    body.appendChild(vid);
-
-  } else if (m.startsWith('audio/')) {
-    const aud = document.createElement('audio');
-    aud.src      = url;
-    aud.controls = true;
-    aud.style.cssText = 'width:100%;max-width:480px';
-    body.style.padding = '3rem 1.5rem';
-    body.appendChild(aud);
-
-  } else if (m.startsWith('text/') || m === 'application/json'
-          || m === 'application/xml' || m === 'application/javascript') {
-    body.style.padding = '0';
-    body.style.alignItems = 'stretch';
-    const spinner = document.createElement('div');
-    spinner.className = 'spinner-border text-primary m-auto';
-    spinner.setAttribute('role', 'status');
-    body.appendChild(spinner);
-    fetch(url).then(r => r.text()).then(txt => {
-      const pre = document.createElement('pre');
-      pre.textContent = txt;
-      pre.style.cssText = 'margin:0;padding:1.5rem;font-size:.82rem;line-height:1.6;overflow:auto;flex:1;color:var(--text-primary);background:var(--surface);width:100%;white-space:pre-wrap;word-break:break-word';
-      body.replaceChildren(pre);
-    }).catch(() => showPreviewUnsupported(body, name));
-
-  } else {
-    showPreviewUnsupported(body, name);
-  }
-
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('filePreviewModal')).show();
-}
-
-function showPreviewUnsupported(body, name) {
-  body.style.padding = '3rem 1.5rem';
-  body.style.textAlign = 'center';
-  body.innerHTML = `
-    <i class="bi bi-file-earmark-x" style="font-size:3rem;color:var(--text-muted);opacity:.4;display:block;margin-bottom:1rem"></i>
-    <div style="color:var(--text-muted);font-size:.9rem">Preview not available for <strong>${name}</strong>.<br>Use the Download button to open it locally.</div>`;
-}
+document.querySelectorAll('.toast').forEach(t => setTimeout(()=>bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
 </script>
 {% endblock %}
-
-{% block scripts %}{% endblock %}

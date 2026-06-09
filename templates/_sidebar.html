@@ -1,0 +1,93 @@
+<nav id="sidebar" class="sidebar d-flex flex-column" aria-label="Sidebar navigation">
+  <div class="sidebar-brand">
+    <i class="bi bi-shield-lock-fill"></i><span>FileVault</span>
+  </div>
+
+  <ul class="nav flex-column mt-3 flex-grow-1">
+    <!-- Security Overview -->
+    <li class="nav-item">
+      <a href="{{ url_for('dashboard') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        <i class="bi bi-speedometer2 me-2"></i>Security Overview
+        {% if fim_open_alerts > 0 %}
+        <span class="badge bg-danger ms-auto">{{ fim_open_alerts }}</span>
+        {% endif %}
+      </a>
+    </li>
+
+    <!-- Divider: Monitoring -->
+    <li class="nav-item mt-2">
+      <hr class="sidebar-divider"/>
+      <small class="text-uppercase px-3 opacity-50 fw-semibold" style="font-size:.65rem;letter-spacing:.06em">Monitoring</small>
+    </li>
+
+    <li class="nav-item">
+      <a href="{{ url_for('fim_monitoring') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'fim_monitoring' %}active{% endif %}">
+        <i class="bi bi-list-check me-2"></i>Monitored Files
+        <span class="badge bg-primary ms-auto">{{ nav_total_files }}</span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="{{ url_for('fim_alerts') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'fim_alerts' %}active{% endif %}">
+        <i class="bi bi-bell me-2"></i>Alerts Center
+        {% if fim_open_alerts > 0 %}
+        <span class="badge bg-danger ms-auto">{{ fim_open_alerts }}</span>
+        {% endif %}
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="{{ url_for('fim_analytics') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'fim_analytics' %}active{% endif %}">
+        <i class="bi bi-graph-up me-2"></i>Analytics
+      </a>
+    </li>
+    {% if current_user.is_admin %}
+    <li class="nav-item">
+      <a href="{{ url_for('fim_policies') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'fim_policies' %}active{% endif %}">
+        <i class="bi bi-sliders me-2"></i>Policies
+      </a>
+    </li>
+    {% endif %}
+
+    <!-- Divider: System -->
+    <li class="nav-item mt-2">
+      <hr class="sidebar-divider"/>
+    </li>
+    <li class="nav-item">
+      <a href="{{ url_for('activity_log') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'activity_log' %}active{% endif %}">
+        <i class="bi bi-activity me-2"></i>Activity Log
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="{{ url_for('profile') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'profile' %}active{% endif %}">
+        <i class="bi bi-gear me-2"></i>Settings
+      </a>
+    </li>
+    {% if current_user.is_admin %}
+    <li class="nav-item">
+      <hr class="sidebar-divider"/>
+      <a href="{{ url_for('admin_panel') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'admin_panel' %}active{% endif %}">
+        <i class="bi bi-person-gear me-2"></i>Admin Panel
+      </a>
+    </li>
+    {% endif %}
+  </ul>
+
+  <div class="sidebar-footer">
+    <a href="{{ url_for('profile') }}" class="sidebar-user-link">
+      <div class="avatar-circle-sm flex-shrink-0">{{ current_user.initials }}</div>
+      <div class="lh-sm overflow-hidden flex-grow-1">
+        <div class="sidebar-user-name">{{ current_user.full_name }}</div>
+        <div class="sidebar-user-email">{{ current_user.email }}</div>
+      </div>
+      <i class="bi bi-chevron-right" style="color:rgba(255,255,255,.25);font-size:.7rem;flex-shrink:0"></i>
+    </a>
+  </div>
+</nav>
+<div class="sidebar-overlay"></div>

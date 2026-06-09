@@ -1,0 +1,367 @@
+{% extends 'base.html' %}
+{% block title %}Monitored Files — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <!-- Top navbar -->
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">Monitored Files</span>
+      <button class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0"
+              data-bs-toggle="modal" data-bs-target="#uploadModal">
+        <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload</span>
+      </button>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
+      <div class="dropdown flex-shrink-0">
+        <button class="btn p-0 border-0" data-bs-toggle="dropdown"><div class="avatar-circle">{{ current_user.initials }}</div></button>
+        <ul class="dropdown-menu dropdown-menu-end" style="min-width:210px">
+          <li class="px-3 py-2">
+            <div class="fw-semibold" style="font-size:.9rem">{{ current_user.full_name }}</div>
+            <div class="text-muted" style="font-size:.78rem">{{ current_user.email }}</div>
+          </li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('profile') }}"><i class="bi bi-person me-2 opacity-60"></i>Profile &amp; Settings</a></li>
+          <li><a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)"><i class="bi bi-box-arrow-right me-2"></i>Sign Out</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    {% if not current_user.email_verified %}
+    <div class="alert alert-info d-flex align-items-center gap-2 mb-0 rounded-0 border-0 border-bottom px-4 py-2">
+      <i class="bi bi-envelope-exclamation-fill flex-shrink-0"></i>
+      <span class="small">Please verify your email address.</span>
+    </div>
+    {% endif %}
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- Search + filter bar -->
+      <form method="GET" action="{{ url_for('fim_monitoring') }}" class="d-flex flex-wrap gap-2 mb-4 align-items-center" id="filterForm">
+        <div class="input-group search-bar" style="max-width:320px">
+          <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
+          <input type="text" name="q" class="form-control border-start-0 ps-0"
+                 placeholder="Search files…" value="{{ query }}"/>
+        </div>
+        <select name="status" class="form-select form-select-sm" style="width:auto"
+                onchange="document.getElementById('filterForm').submit()">
+          <option value=""         {% if not status_filter %}selected{% endif %}>All statuses</option>
+          <option value="ok"       {% if status_filter=='ok'        %}selected{% endif %}>✓ Healthy</option>
+          <option value="tampered" {% if status_filter=='tampered'  %}selected{% endif %}>⚠ Tampered</option>
+          <option value="missing"  {% if status_filter=='missing'   %}selected{% endif %}>✗ Missing</option>
+          <option value="pending"  {% if status_filter=='pending'   %}selected{% endif %}>⌛ Pending</option>
+          <option value="error"    {% if status_filter=='error'     %}selected{% endif %}>! Error</option>
+        </select>
+        <!-- Sort buttons -->
+        {% for s, label in [('date','Date'),('name','Name'),('status','Status'),('last_check','Last Check'),('alerts','Alerts')] %}
+        {% set next_order = 'asc' if (sort == s and order == 'desc') else 'desc' %}
+        <a href="{{ url_for('fim_monitoring', q=query, status=status_filter, sort=s, order=next_order) }}"
+           class="btn btn-sm {% if sort==s %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+          {{ label }}{% if sort==s %}<i class="bi bi-arrow-{% if order=='asc' %}up{% else %}down{% endif %} ms-1"></i>{% endif %}
+        </a>
+        {% endfor %}
+        {% if query %}<a href="{{ url_for('fim_monitoring') }}" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
+      </form>
+
+      <!-- File table -->
+      {% if files %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle" style="font-size:.875rem">
+          <thead class="table-light">
+            <tr>
+              <th>File</th>
+              <th>Status</th>
+              <th>Last Check</th>
+              <th>Alerts</th>
+              <th>Policy</th>
+              <th style="min-width:140px">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for f in files %}
+          <tr id="row-{{ f.uuid }}">
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <i class="bi {{ f.icon }} flex-shrink-0"></i>
+                <div class="overflow-hidden">
+                  <div class="fw-semibold text-truncate" style="max-width:220px" title="{{ f.original_name }}">
+                    <a href="{{ url_for('fim_file_status', file_id=f.id) }}" class="text-decoration-none">{{ f.original_name }}</a>
+                  </div>
+                  <div class="text-muted small">{{ f.size_human }} · {{ f.uploaded_at.strftime('%b %d, %Y') }}</div>
+                </div>
+              </div>
+            </td>
+            <td>{{ f.status_badge[0] | safe }}</td>
+            <td class="text-muted small">
+              {% if f.last_checked_at %}{{ f.last_checked_at.strftime('%b %d %H:%M') }}{% else %}—{% endif %}
+            </td>
+            <td>
+              {% if f.alert_count > 0 %}
+              <a href="{{ url_for('fim_alerts', file_id=f.id) }}"
+                 class="badge bg-danger text-decoration-none">{{ f.alert_count }}</a>
+              {% else %}<span class="text-muted">0</span>{% endif %}
+            </td>
+            <td class="text-muted small">{{ f.policy.name if f.policy else '—' }}</td>
+            <td>
+              <div class="d-flex gap-1 flex-wrap">
+                <!-- Manual check -->
+                <button class="btn btn-sm btn-outline-info" title="Run integrity check"
+                        onclick="runCheck('{{ f.uuid }}', this)">
+                  <i class="bi bi-shield-check"></i>
+                </button>
+                <!-- View details -->
+                <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="View details">
+                  <i class="bi bi-eye"></i>
+                </a>
+                <!-- Download -->
+                <a href="{{ url_for('download_file', file_uuid=f.uuid) }}"
+                   class="btn btn-sm btn-outline-secondary" title="Download">
+                  <i class="bi bi-download"></i>
+                </a>
+                {% if f.user_id == current_user.id or current_user.is_admin %}
+                <!-- Reset baseline (admin) -->
+                {% if current_user.is_admin %}
+                <button class="btn btn-sm btn-outline-warning" title="Reset baseline"
+                        onclick="resetBaseline('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
+                  <i class="bi bi-arrow-counterclockwise"></i>
+                </button>
+                {% endif %}
+                <!-- Delete -->
+                <button class="btn btn-sm btn-outline-danger" title="Delete"
+                        onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      {% if pagination.pages > 1 %}
+      <nav class="mt-3 d-flex justify-content-center">
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('fim_monitoring', q=query, status=status_filter, sort=sort, order=order, page=pagination.prev_num) }}"><i class="bi bi-chevron-left"></i></a>
+          </li>
+          {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+            <li class="page-item {% if p == pagination.page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('fim_monitoring', q=query, status=status_filter, sort=sort, order=order, page=p) }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+          {% endfor %}
+          <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('fim_monitoring', q=query, status=status_filter, sort=sort, order=order, page=pagination.next_num) }}"><i class="bi bi-chevron-right"></i></a>
+          </li>
+        </ul>
+      </nav>
+      {% endif %}
+
+      {% else %}
+      <div class="empty-state text-center py-5">
+        <i class="bi bi-shield-slash display-3 text-muted opacity-50"></i>
+        <p class="mt-3 text-muted">
+          {% if query %}No files match "{{ query }}".
+          {% elif status_filter %}No files with status "{{ status_filter }}".
+          {% else %}No files uploaded yet. Click <strong>Upload</strong> to get started.{% endif %}
+        </p>
+        {% if not query and not status_filter %}
+        <button class="btn btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#uploadModal">
+          <i class="bi bi-cloud-upload me-2"></i>Upload a file
+        </button>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Upload modal ── -->
+<div class="modal fade" id="uploadModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-cloud-upload me-2 text-primary"></i>Upload File</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="uploadBody">
+        <div class="upload-dropzone" id="dropZone">
+          <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+          <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
+          <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="document.getElementById('fileInput').click()">Browse file</button>
+          <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
+        </div>
+        <input type="file" name="file" id="fileInput" class="d-none"/>
+        <div id="uploadProgress" class="d-none mt-3">
+          <div class="d-flex justify-content-between small mb-1">
+            <span>Uploading…</span><span id="uploadProgressPct">0%</span>
+          </div>
+          <div class="progress" style="height:8px">
+            <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="mt-2"><small class="text-muted">Allowed: images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small></div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="uploadBtn" onclick="startUpload()"><i class="bi bi-upload me-2"></i>Upload</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reset baseline confirm modal -->
+<div class="modal fade" id="resetBaselineModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2 text-warning"></i>Reset Baseline</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Accept the current on-disk file as the new trusted baseline for <strong id="resetFileName"></strong>? This will close any open alerts.</p>
+        <input type="text" id="resetNote" class="form-control form-control-sm" placeholder="Optional note (reason for reset)"/>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning" id="resetBaselineConfirm">Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// ── Drag & drop upload ──
+const dz = document.getElementById('dropZone');
+const fi = document.getElementById('fileInput');
+if (dz) {
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length) { fi.files = e.dataTransfer.files; showFileName(fi); }
+  });
+  fi.addEventListener('change', () => showFileName(fi));
+}
+function showFileName(input) {
+  document.getElementById('fileChosenName').textContent = input.files[0]?.name ? `Selected: ${input.files[0].name}` : '';
+}
+
+async function startUpload() {
+  const file = fi.files[0];
+  if (!file) { alert('Please select a file first.'); return; }
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  document.getElementById('uploadProgress').classList.remove('d-none');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('csrf_token', CSRF);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '{{ url_for("upload_file") }}');
+  xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      document.getElementById('uploadProgressBar').style.width = pct + '%';
+      document.getElementById('uploadProgressPct').textContent = pct + '%';
+    }
+  };
+  xhr.onload = () => {
+    const data = JSON.parse(xhr.responseText);
+    bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
+    btn.disabled = false;
+    document.getElementById('uploadProgress').classList.add('d-none');
+    document.getElementById('uploadProgressBar').style.width = '0%';
+    fi.value = '';
+    document.getElementById('fileChosenName').textContent = '';
+    if (data.success) { showToast(`"${data.file.original_name}" uploaded — baseline captured.`, 'success'); setTimeout(()=>location.reload(), 1200); }
+    else showToast(data.error || 'Upload failed.', 'danger');
+  };
+  xhr.onerror = () => { btn.disabled = false; showToast('Network error.', 'danger'); };
+  xhr.send(form);
+}
+
+// ── Manual integrity check ──
+async function runCheck(fileUuid, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  const r = await fetch(`/fim/check/${fileUuid}`, { method:'POST', body:form });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.innerHTML = orig;
+  if (d.success) {
+    const statusMap = { ok:'success', tampered:'danger', missing:'warning', error:'warning', skip:'info' };
+    showToast(d.message || d.status, statusMap[d.status] || 'info');
+    if (d.status !== 'ok') setTimeout(()=>location.reload(), 1500);
+  } else showToast(d.error || 'Check failed.', 'danger');
+}
+
+// ── Reset baseline ──
+let _resetUuid = null, _resetBtn = null;
+function resetBaseline(fileUuid, fileName, btn) {
+  _resetUuid = fileUuid; _resetBtn = btn;
+  document.getElementById('resetFileName').textContent = fileName;
+  document.getElementById('resetNote').value = '';
+  new bootstrap.Modal(document.getElementById('resetBaselineModal')).show();
+}
+document.getElementById('resetBaselineConfirm')?.addEventListener('click', async () => {
+  if (!_resetUuid) return;
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('note', document.getElementById('resetNote').value.trim());
+  const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
+  const d = await r.json();
+  bootstrap.Modal.getInstance(document.getElementById('resetBaselineModal')).hide();
+  if (d.success) { showToast(d.message, 'success'); setTimeout(()=>location.reload(), 1200); }
+  else showToast(d.error || 'Reset failed.', 'danger');
+});
+
+// ── AJAX delete ──
+async function ajaxDelete(url, row) {
+  if (!confirm('Delete this file? This cannot be undone.')) return;
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  const r = await fetch(url, { method:'POST', body:form });
+  const d = await r.json();
+  if (d.success && row) { row.style.opacity='.4'; setTimeout(()=>row.remove(), 400); }
+}
+
+function showToast(message, type='info') {
+  const c = document.getElementById('toastContainer') || (() => {
+    const el = document.createElement('div');
+    el.id = 'toastContainer';
+    el.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    el.style.zIndex = 1100;
+    document.body.appendChild(el);
+    return el;
+  })();
+  const el = document.createElement('div');
+  el.className = `toast align-items-center text-white bg-${type} border-0`;
+  el.setAttribute('role','alert');
+  el.innerHTML = `<div class="d-flex"><div class="toast-body">${message}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  c.appendChild(el);
+  const t = new bootstrap.Toast(el, { delay:4000 });
+  t.show();
+  el.addEventListener('hidden.bs.toast', ()=>el.remove());
+}
+
+document.querySelectorAll('.toast').forEach(t => setTimeout(()=>bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
+</script>
+{% endblock %}

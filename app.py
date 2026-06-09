@@ -154,6 +154,46 @@ PER_PAGE = 20
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
+class MonitoringPolicy(db.Model):
+    __tablename__ = 'monitoring_policies'
+    id                   = db.Column(db.Integer, primary_key=True)
+    name                 = db.Column(db.String(100), unique=True, nullable=False)
+    description          = db.Column(db.Text, nullable=True)
+    check_interval_mins  = db.Column(db.Integer, nullable=False, default=60)
+    alert_on_tamper      = db.Column(db.Boolean, nullable=False, default=True)
+    alert_on_missing     = db.Column(db.Boolean, nullable=False, default=True)
+    alert_on_size_change = db.Column(db.Boolean, nullable=False, default=False)
+    email_alert          = db.Column(db.Boolean, nullable=False, default=True)
+    socket_alert         = db.Column(db.Boolean, nullable=False, default=True)
+    severity_default     = db.Column(db.String(10), nullable=False, default='high')
+    max_file_size_mb     = db.Column(db.Integer, nullable=True)
+    excluded_extensions  = db.Column(db.Text, nullable=False, default='')  # comma-separated
+    retention_days       = db.Column(db.Integer, nullable=False, default=365)
+    is_default           = db.Column(db.Boolean, nullable=False, default=False)
+    is_active            = db.Column(db.Boolean, nullable=False, default=True)
+    created_by_id        = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at           = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at           = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                                     onupdate=lambda: datetime.now(timezone.utc))
+
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+    files      = db.relationship('File', back_populates='policy', lazy='dynamic',
+                                 foreign_keys='File.policy_id')
+
+    @property
+    def interval_label(self):
+        m = self.check_interval_mins
+        if m < 60:   return f'Every {m} min'
+        if m == 60:  return 'Every hour'
+        if m < 1440: return f'Every {m // 60}h'
+        return 'Daily'
+
+    @property
+    def excluded_list(self):
+        return [e.strip() for e in self.excluded_extensions.split(',') if e.strip()]
+
+
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
     id                  = db.Column(db.Integer, primary_key=True)
@@ -173,11 +213,16 @@ class User(UserMixin, db.Model):
     webauthn_public_key    = db.Column(db.LargeBinary, nullable=True)
     webauthn_sign_count    = db.Column(db.Integer,     default=0)
     webauthn_enabled       = db.Column(db.Boolean,     default=False)
-    webauthn_type          = db.Column(db.String(20),  nullable=True)  # 'fingerprint' or 'face_id'
+    webauthn_type          = db.Column(db.String(20),  nullable=True)
+    # FIM — default monitoring policy for files uploaded by this user
+    default_policy_id      = db.Column(db.Integer,
+                                       db.ForeignKey('monitoring_policies.id', ondelete='SET NULL'),
+                                       nullable=True)
 
-    files = db.relationship('File', backref='owner', lazy=True,
-                            foreign_keys='File.user_id',
-                            cascade='all, delete-orphan')
+    files          = db.relationship('File', backref='owner', lazy=True,
+                                     foreign_keys='File.user_id',
+                                     cascade='all, delete-orphan')
+    default_policy = db.relationship('MonitoringPolicy', foreign_keys=[default_policy_id])
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -221,11 +266,54 @@ class File(db.Model):
     user_id       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     uploaded_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_encrypted  = db.Column(db.Boolean, default=False)
-    file_hash     = db.Column(db.String(64), nullable=True)  # SHA-256 of original data
+    file_hash     = db.Column(db.String(64), nullable=True)
+    # FIM monitoring columns
+    monitoring_enabled = db.Column(db.Boolean, nullable=False, default=True)
+    policy_id          = db.Column(db.Integer,
+                                   db.ForeignKey('monitoring_policies.id', ondelete='SET NULL'),
+                                   nullable=True)
+    current_status     = db.Column(db.String(20), nullable=False, default='pending')
+    last_checked_at    = db.Column(db.DateTime, nullable=True)
+    next_check_at      = db.Column(db.DateTime, nullable=True)
+    check_count        = db.Column(db.Integer, nullable=False, default=0)
+    alert_count        = db.Column(db.Integer, nullable=False, default=0)
 
-    shares = db.relationship('FileShare', backref='file', lazy=True,
-                             foreign_keys='FileShare.file_id',
-                             cascade='all, delete-orphan')
+    shares    = db.relationship('FileShare', backref='file', lazy=True,
+                               foreign_keys='FileShare.file_id',
+                               cascade='all, delete-orphan')
+    policy    = db.relationship('MonitoringPolicy', foreign_keys=[policy_id],
+                                back_populates='files')
+    baselines = db.relationship('IntegrityBaseline', back_populates='file',
+                                cascade='all, delete-orphan',
+                                order_by='IntegrityBaseline.captured_at.desc()',
+                                lazy='dynamic')
+    checks    = db.relationship('IntegrityCheck', back_populates='file',
+                                cascade='all, delete-orphan',
+                                order_by='IntegrityCheck.checked_at.desc()',
+                                lazy='dynamic')
+    fim_alerts = db.relationship('IntegrityAlert', back_populates='file',
+                                 cascade='all, delete-orphan',
+                                 order_by='IntegrityAlert.raised_at.desc()',
+                                 lazy='dynamic')
+
+    @property
+    def current_baseline(self):
+        return self.baselines.filter_by(is_current=True).first()
+
+    @property
+    def open_alert_count(self):
+        return self.fim_alerts.filter_by(status='open').count()
+
+    @property
+    def status_badge(self):
+        return {
+            'ok':          ('<span class="badge badge-ok">OK</span>',          'bi-shield-check text-success'),
+            'tampered':    ('<span class="badge badge-tampered">TAMPERED</span>', 'bi-shield-exclamation text-danger'),
+            'missing':     ('<span class="badge badge-missing">MISSING</span>',   'bi-file-earmark-x text-warning'),
+            'error':       ('<span class="badge badge-error">ERROR</span>',        'bi-exclamation-triangle text-warning'),
+            'pending':     ('<span class="badge badge-pending">PENDING</span>',    'bi-hourglass-split text-muted'),
+            'unmonitored': ('<span class="badge badge-secondary">UNMONITORED</span>', 'bi-shield-slash text-muted'),
+        }.get(self.current_status, ('<span class="badge bg-secondary">UNKNOWN</span>', 'bi-question-circle'))
 
     @property
     def is_shared(self):
@@ -330,6 +418,191 @@ class ActivityLog(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship('User', foreign_keys='ActivityLog.user_id')
+
+
+# ---------------------------------------------------------------------------
+# FIM Models
+# ---------------------------------------------------------------------------
+
+class IntegrityBaseline(db.Model):
+    """Immutable hash anchor. Written once at upload; superseded (not updated) on reset."""
+    __tablename__ = 'integrity_baselines'
+    id               = db.Column(db.Integer, primary_key=True)
+    file_id          = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    sha256_hash      = db.Column(db.String(64), nullable=False)
+    file_size_bytes  = db.Column(db.BigInteger, nullable=False)
+    is_current       = db.Column(db.Boolean, nullable=False, default=True)
+    captured_at      = db.Column(db.DateTime, nullable=False,
+                                 default=lambda: datetime.now(timezone.utc))
+    captured_by_id   = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    capture_reason   = db.Column(db.String(20), nullable=False, default='upload')
+    superseded_at    = db.Column(db.DateTime, nullable=True)
+    superseded_by_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    supersede_note   = db.Column(db.String(500), nullable=True)
+
+    file          = db.relationship('File', back_populates='baselines')
+    captured_by   = db.relationship('User', foreign_keys=[captured_by_id])
+    superseded_by = db.relationship('User', foreign_keys=[superseded_by_id])
+    checks        = db.relationship('IntegrityCheck', back_populates='baseline', lazy='dynamic')
+
+    @property
+    def short_hash(self):
+        return (self.sha256_hash[:16] + '...') if self.sha256_hash else '—'
+
+    def supersede(self, by_user, note=''):
+        self.is_current       = False
+        self.superseded_at    = datetime.now(timezone.utc)
+        self.superseded_by_id = by_user.id if by_user else None
+        self.supersede_note   = note
+
+
+class IntegrityCheck(db.Model):
+    """One row per scheduler tick or manual check."""
+    __tablename__ = 'integrity_checks'
+    id                   = db.Column(db.Integer, primary_key=True)
+    file_id              = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    baseline_id          = db.Column(db.Integer, db.ForeignKey('integrity_baselines.id', ondelete='SET NULL'), nullable=True)
+    checked_at           = db.Column(db.DateTime, nullable=False,
+                                     default=lambda: datetime.now(timezone.utc))
+    computed_sha256      = db.Column(db.String(64), nullable=True)
+    file_size_at_check   = db.Column(db.BigInteger, nullable=True)
+    status               = db.Column(db.String(20), nullable=False)  # ok|tampered|missing|error|permission_denied
+    triggered_by         = db.Column(db.String(20), nullable=False, default='scheduler')  # scheduler|manual|upload|watchdog
+    triggered_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    check_duration_ms    = db.Column(db.Integer, nullable=True)
+    error_message        = db.Column(db.String(500), nullable=True)
+
+    file              = db.relationship('File', back_populates='checks')
+    baseline          = db.relationship('IntegrityBaseline', back_populates='checks')
+    triggered_by_user = db.relationship('User', foreign_keys=[triggered_by_user_id])
+    alert             = db.relationship('IntegrityAlert', back_populates='check', uselist=False)
+
+    @property
+    def passed(self):
+        return self.status == 'ok'
+
+
+class IntegrityAlert(db.Model):
+    """Raised when an integrity check finds status != 'ok'."""
+    __tablename__ = 'integrity_alerts'
+    id                  = db.Column(db.Integer, primary_key=True)
+    file_id             = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    check_id            = db.Column(db.Integer, db.ForeignKey('integrity_checks.id', ondelete='CASCADE'), nullable=False)
+    raised_at           = db.Column(db.DateTime, nullable=False,
+                                    default=lambda: datetime.now(timezone.utc))
+    severity            = db.Column(db.String(10), nullable=False, default='high')
+    alert_type          = db.Column(db.String(30), nullable=False, default='hash_mismatch')
+    title               = db.Column(db.String(200), nullable=False)
+    description         = db.Column(db.Text, nullable=True)
+    # Forensic evidence — copied at creation, never updated
+    expected_hash       = db.Column(db.String(64), nullable=False, default='')
+    found_hash          = db.Column(db.String(64), nullable=True)
+    expected_size       = db.Column(db.BigInteger, nullable=True)
+    found_size          = db.Column(db.BigInteger, nullable=True)
+    # Lifecycle
+    status              = db.Column(db.String(20), nullable=False, default='open')
+    # Assignment
+    assigned_to_id      = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    assigned_at         = db.Column(db.DateTime, nullable=True)
+    assigned_by_id      = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Acknowledgement
+    acknowledged_at     = db.Column(db.DateTime, nullable=True)
+    acknowledged_by_id  = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Resolution
+    resolved_at         = db.Column(db.DateTime, nullable=True)
+    resolved_by_id      = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    resolution_type     = db.Column(db.String(30), nullable=True)
+    resolution_note     = db.Column(db.String(1000), nullable=True)
+    # Escalation
+    escalated_to_id     = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    escalated_at        = db.Column(db.DateTime, nullable=True)
+    # Notification tracking
+    email_sent          = db.Column(db.Boolean, nullable=False, default=False)
+    socket_emitted      = db.Column(db.Boolean, nullable=False, default=False)
+
+    file            = db.relationship('File', back_populates='fim_alerts')
+    check           = db.relationship('IntegrityCheck', back_populates='alert')
+    assigned_to     = db.relationship('User', foreign_keys=[assigned_to_id])
+    assigned_by     = db.relationship('User', foreign_keys=[assigned_by_id])
+    acknowledged_by = db.relationship('User', foreign_keys=[acknowledged_by_id])
+    resolved_by     = db.relationship('User', foreign_keys=[resolved_by_id])
+    escalated_to    = db.relationship('User', foreign_keys=[escalated_to_id])
+    comments        = db.relationship('AlertComment', back_populates='alert',
+                                      cascade='all, delete-orphan',
+                                      order_by='AlertComment.created_at')
+
+    @property
+    def size_delta(self):
+        if self.found_size is None or self.expected_size is None:
+            return None
+        return self.found_size - self.expected_size
+
+    @property
+    def is_open(self):
+        return self.status == 'open'
+
+    @property
+    def severity_class(self):
+        return {
+            'info':     'badge-info',
+            'low':      'badge-low',
+            'medium':   'badge-medium',
+            'high':     'badge-high',
+            'critical': 'badge-critical',
+        }.get(self.severity, 'bg-secondary')
+
+    @property
+    def severity_icon(self):
+        return {
+            'info':     'bi-info-circle text-secondary',
+            'low':      'bi-exclamation-circle text-info',
+            'medium':   'bi-exclamation-triangle text-warning',
+            'high':     'bi-shield-exclamation',
+            'critical': 'bi-shield-fill-exclamation text-danger',
+        }.get(self.severity, 'bi-question-circle')
+
+    def acknowledge(self, by_user):
+        self.status              = 'acknowledged'
+        self.acknowledged_at     = datetime.now(timezone.utc)
+        self.acknowledged_by_id  = by_user.id
+
+    def resolve(self, by_user, resolution_type, note=''):
+        self.status          = 'resolved'
+        self.resolved_at     = datetime.now(timezone.utc)
+        self.resolved_by_id  = by_user.id
+        self.resolution_type = resolution_type
+        self.resolution_note = note
+
+    def mark_false_positive(self, by_user, note=''):
+        self.resolve(by_user, 'false_positive', note)
+        self.status = 'false_positive'
+
+    def escalate(self, to_user, by_user):
+        self.status          = 'escalated'
+        self.escalated_to_id = to_user.id
+        self.escalated_at    = datetime.now(timezone.utc)
+        if not self.acknowledged_at:
+            self.acknowledge(by_user)
+
+    def assign(self, to_user, by_user):
+        self.assigned_to_id = to_user.id
+        self.assigned_at    = datetime.now(timezone.utc)
+        self.assigned_by_id = by_user.id
+
+
+class AlertComment(db.Model):
+    __tablename__ = 'alert_comments'
+    id          = db.Column(db.Integer, primary_key=True)
+    alert_id    = db.Column(db.Integer, db.ForeignKey('integrity_alerts.id', ondelete='CASCADE'), nullable=False)
+    user_id     = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    comment     = db.Column(db.Text, nullable=False)
+    is_internal = db.Column(db.Boolean, nullable=False, default=False)
+    created_at  = db.Column(db.DateTime, nullable=False,
+                            default=lambda: datetime.now(timezone.utc))
+    is_deleted  = db.Column(db.Boolean, nullable=False, default=False)
+
+    alert = db.relationship('IntegrityAlert', back_populates='comments')
+    user  = db.relationship('User')
 
 
 @login_manager.user_loader
@@ -514,6 +787,30 @@ def _apply_type_filter(q, type_filter):
     if exts:
         q = q.filter(db.or_(*[File.original_name.ilike(f'%.{e}') for e in exts]))
     return q
+
+
+# ---------------------------------------------------------------------------
+# Template context processors
+# ---------------------------------------------------------------------------
+@app.context_processor
+def _fim_nav_context():
+    """Inject FIM nav badge counts into every template."""
+    if not current_user.is_authenticated:
+        return {'fim_open_alerts': 0, 'nav_total_files': 0}
+    try:
+        if current_user.is_admin:
+            open_count = IntegrityAlert.query.filter_by(status='open').count()
+            file_count = File.query.count()
+        else:
+            uid_sub    = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+            open_count = IntegrityAlert.query.filter(
+                IntegrityAlert.status == 'open',
+                IntegrityAlert.file_id.in_(uid_sub),
+            ).count()
+            file_count = File.query.filter_by(user_id=current_user.id).count()
+        return {'fim_open_alerts': open_count, 'nav_total_files': file_count}
+    except Exception:
+        return {'fim_open_alerts': 0, 'nav_total_files': 0}
 
 
 # ---------------------------------------------------------------------------
@@ -861,79 +1158,69 @@ def profile():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard
+# Dashboard — FIM Security Overview
 # ---------------------------------------------------------------------------
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    query       = request.args.get('q', '').strip()
-    section     = request.args.get('section', 'my_files')
-    sort        = request.args.get('sort', 'date')
-    order       = request.args.get('order', 'desc')
-    type_filter = request.args.get('type', '')
-    page        = request.args.get('page', 1, type=int)
+    # Legacy file-management section links redirect to monitoring page
+    section = request.args.get('section', '')
+    if section in ('my_files', 'shared_with_me', 'recent'):
+        return redirect(url_for('fim_monitoring'))
 
-    if section == 'shared_with_me':
-        file_ids = [s.file_id for s in
-                    FileShare.query.filter_by(shared_with_id=current_user.id).all()]
-        q = File.query.filter(File.id.in_(file_ids))
-        if query:
-            q = q.filter(File.original_name.ilike(f'%{query}%'))
-        if type_filter:
-            q = _apply_type_filter(q, type_filter)
-        q = _apply_sort(q, sort, order)
-        pagination   = q.paginate(page=page, per_page=PER_PAGE, error_out=False)
-        own_files    = []
-        shared_files = pagination.items
+    is_admin = current_user.is_admin
 
-    elif section == 'recent':
-        q = File.query.filter_by(user_id=current_user.id)
-        if query:
-            q = q.filter(File.original_name.ilike(f'%{query}%'))
-        if type_filter:
-            q = _apply_type_filter(q, type_filter)
-        q = _apply_sort(q, sort, order)
-        pagination   = q.paginate(page=page, per_page=PER_PAGE, error_out=False)
-        own_files    = pagination.items
-        shared_files = []
+    if is_admin:
+        file_q  = File.query
+        alert_q = IntegrityAlert.query
+    else:
+        file_q  = File.query.filter_by(user_id=current_user.id)
+        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
 
-    else:  # my_files
-        q = File.query.filter_by(user_id=current_user.id)
-        if query:
-            q = q.filter(File.original_name.ilike(f'%{query}%'))
-        if type_filter:
-            q = _apply_type_filter(q, type_filter)
-        q = _apply_sort(q, sort, order)
-        pagination   = q.paginate(page=page, per_page=PER_PAGE, error_out=False)
-        own_files    = pagination.items
-        shared_files = []
+    monitored = file_q.filter_by(monitoring_enabled=True)
 
-    all_my           = File.query.filter_by(user_id=current_user.id).all()
-    total_size_bytes = sum(f.size for f in all_my)
-    quota            = app.config['STORAGE_QUOTA_BYTES']
-    quota_pct        = min(100, round(total_size_bytes / quota * 100, 1))
-    week_labels, week_counts = _weekly_uploads(current_user.id)
-    type_breakdown = _storage_type_breakdown(all_my)
+    stats = dict(
+        total_monitored = monitored.count(),
+        ok              = monitored.filter_by(current_status='ok').count(),
+        tampered        = monitored.filter_by(current_status='tampered').count(),
+        missing         = monitored.filter_by(current_status='missing').count(),
+        pending         = monitored.filter_by(current_status='pending').count(),
+        error           = monitored.filter_by(current_status='error').count(),
+        open_alerts     = alert_q.filter_by(status='open').count(),
+    )
+
+    sev_counts = {s: alert_q.filter_by(status='open', severity=s).count()
+                  for s in ('critical', 'high', 'medium', 'low', 'info')}
+
+    open_alerts = (
+        alert_q.filter_by(status='open')
+        .order_by(IntegrityAlert.severity.desc(), IntegrityAlert.raised_at.desc())
+        .limit(10).all()
+    )
+
+    now = datetime.now(timezone.utc)
+    trend_labels, trend_counts = [], []
+    for i in range(6, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        c   = alert_q.filter(func.date(IntegrityAlert.raised_at) == str(day)).count()
+        trend_labels.append(day.strftime('%a'))
+        trend_counts.append(c)
+
+    if is_admin:
+        chk_q = IntegrityCheck.query
+    else:
+        uid_sub2  = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        chk_q     = IntegrityCheck.query.filter(IntegrityCheck.file_id.in_(uid_sub2))
+    recent_checks = chk_q.order_by(IntegrityCheck.checked_at.desc()).limit(8).all()
 
     return render_template('dashboard.html',
-        own_files=own_files,
-        shared_files=shared_files,
-        pagination=pagination,
-        section=section,
-        query=query,
-        sort=sort,
-        order=order,
-        type_filter=type_filter,
-        total_files=len(all_my),
-        total_size=format_bytes(total_size_bytes),
-        shared_count=sum(1 for f in all_my if f.is_shared),
-        quota_pct=quota_pct,
-        quota_max=format_bytes(quota),
-        all_users=User.query.filter(User.id != current_user.id).all(),
-        week_labels=week_labels,
-        week_counts=week_counts,
-        type_breakdown=type_breakdown,
-        action_icons=ACTION_ICONS,
+        stats=stats,
+        sev_counts=sev_counts,
+        open_alerts=open_alerts,
+        trend_labels=trend_labels,
+        trend_counts=trend_counts,
+        recent_checks=recent_checks,
     )
 
 
@@ -990,13 +1277,21 @@ def upload_file():
             os.remove(save_path)
         return err('Database error, upload cancelled.', 500)
 
+    # Capture FIM baseline immediately after upload
+    try:
+        from integrity_engine import capture_baseline as _cap_baseline
+        _cap_baseline(rec, current_user, reason='upload')
+        db.session.commit()
+    except Exception as _fim_exc:
+        app.logger.warning('FIM baseline capture failed for "%s": %s', original_name, _fim_exc)
+
     broadcast_event('upload', f'{current_user.full_name} uploaded "{original_name}"',
                     original_name, current_user.full_name)
 
     if is_ajax:
         return jsonify(success=True, file=rec.to_dict())
     flash(f'"{original_name}" uploaded successfully.', 'success')
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('fim_monitoring'))
 
 
 @app.route('/download/<file_uuid>')
@@ -1406,6 +1701,488 @@ def delete_user(user_id):
 
 
 # ---------------------------------------------------------------------------
+# FIM — Monitoring (file list with integrity status)
+# ---------------------------------------------------------------------------
+@app.route('/fim/monitoring')
+@login_required
+def fim_monitoring():
+    query  = request.args.get('q', '').strip()
+    status = request.args.get('status', '')
+    sort   = request.args.get('sort', 'date')
+    order  = request.args.get('order', 'desc')
+    page   = request.args.get('page', 1, type=int)
+
+    q = File.query if current_user.is_admin else File.query.filter_by(user_id=current_user.id)
+    if query:
+        q = q.filter(File.original_name.ilike(f'%{query}%'))
+    if status:
+        q = q.filter_by(current_status=status)
+
+    sort_col = {
+        'name':       File.original_name,
+        'status':     File.current_status,
+        'last_check': File.last_checked_at,
+        'alerts':     File.alert_count,
+        'size':       File.size,
+    }.get(sort, File.uploaded_at)
+    q = q.order_by(sort_col.asc() if order == 'asc' else sort_col.desc())
+    pagination = q.paginate(page=page, per_page=PER_PAGE, error_out=False)
+
+    all_users = User.query.filter(User.id != current_user.id).all()
+    policies  = MonitoringPolicy.query.filter_by(is_active=True).all()
+
+    return render_template('fim/monitoring.html',
+        files=pagination.items,
+        pagination=pagination,
+        query=query,
+        status_filter=status,
+        sort=sort,
+        order=order,
+        all_users=all_users,
+        policies=policies,
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — File detail / check history
+# ---------------------------------------------------------------------------
+@app.route('/fim/file/<int:file_id>')
+@login_required
+def fim_file_status(file_id):
+    file_rec = File.query.get_or_404(file_id)
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        abort(403)
+
+    page   = request.args.get('page', 1, type=int)
+    checks = file_rec.checks.paginate(page=page, per_page=20, error_out=False)
+    alerts = file_rec.fim_alerts.all()
+
+    return render_template('fim/integrity_status.html',
+        file=file_rec,
+        checks=checks,
+        alerts=alerts,
+        baseline=file_rec.current_baseline,
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Manual check
+# ---------------------------------------------------------------------------
+@app.route('/fim/check/<file_uuid>', methods=['POST'])
+@login_required
+def fim_manual_check(file_uuid):
+    from integrity_engine import check_single_file, run_alert_pipeline
+
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+
+    result = check_single_file(
+        file_id=file_rec.id,
+        triggered_by='manual',
+        triggered_by_user_id=current_user.id,
+    )
+    if result['status'] not in ('ok', 'skip'):
+        run_alert_pipeline(file_rec, result)
+    db.session.commit()
+
+    return jsonify(
+        success=True,
+        status=result['status'],
+        check_id=result.get('check_id'),
+        message={
+            'ok':      'File integrity verified — no changes detected.',
+            'tampered':'⚠ Hash mismatch detected! Alert raised.',
+            'missing': '⚠ File is missing from disk! Alert raised.',
+            'error':   'Check error — see alert details.',
+            'skip':    'Skipped (no baseline).',
+        }.get(result['status'], result['status']),
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Reset / accept baseline
+# ---------------------------------------------------------------------------
+@app.route('/fim/baseline/<file_uuid>/reset', methods=['POST'])
+@login_required
+def fim_reset_baseline(file_uuid):
+    from integrity_engine import accept_new_baseline
+
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    note     = request.form.get('note', '').strip()
+
+    ok = accept_new_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
+    if not ok:
+        return jsonify(success=False, error='Failed to capture new baseline — file may be missing'), 500
+
+    db.session.commit()
+    log_activity('baseline_reset', f'Reset baseline for "{file_rec.original_name}"')
+    db.session.commit()
+    return jsonify(success=True, message='Baseline updated and open alerts resolved.')
+
+
+# ---------------------------------------------------------------------------
+# FIM — Alerts centre
+# ---------------------------------------------------------------------------
+@app.route('/fim/alerts')
+@login_required
+def fim_alerts():
+    sev    = request.args.get('severity', '')
+    status = request.args.get('status', 'open')
+    fid    = request.args.get('file_id', '', type=str)
+    page   = request.args.get('page', 1, type=int)
+
+    if current_user.is_admin:
+        q = IntegrityAlert.query
+    else:
+        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
+
+    if status:
+        q = q.filter_by(status=status)
+    if sev:
+        q = q.filter_by(severity=sev)
+    if fid:
+        try:
+            q = q.filter_by(file_id=int(fid))
+        except ValueError:
+            pass
+
+    q = q.order_by(IntegrityAlert.raised_at.desc())
+    pagination = q.paginate(page=page, per_page=25, error_out=False)
+
+    analysts = User.query.filter(User.role.in_(['super_admin', 'analyst'])).all()
+
+    return render_template('fim/alerts.html',
+        alerts=pagination.items,
+        pagination=pagination,
+        sev_filter=sev,
+        status_filter=status,
+        file_id_filter=fid,
+        analysts=analysts,
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Alert actions (acknowledge / resolve / false-positive / escalate /
+#        assign / comment)
+# ---------------------------------------------------------------------------
+def _get_alert_for_action(alert_id):
+    alert = IntegrityAlert.query.get_or_404(alert_id)
+    if not current_user.is_admin:
+        file_owner = File.query.get(alert.file_id)
+        if not file_owner or file_owner.user_id != current_user.id:
+            abort(403)
+    return alert
+
+
+@app.route('/fim/alerts/<int:alert_id>/acknowledge', methods=['POST'])
+@login_required
+def fim_alert_acknowledge(alert_id):
+    alert = _get_alert_for_action(alert_id)
+    if alert.status not in ('open', 'escalated'):
+        return jsonify(success=False, error='Alert is already closed'), 400
+    alert.acknowledge(current_user)
+    db.session.commit()
+    return jsonify(success=True, new_status=alert.status)
+
+
+@app.route('/fim/alerts/<int:alert_id>/resolve', methods=['POST'])
+@login_required
+def fim_alert_resolve(alert_id):
+    alert       = _get_alert_for_action(alert_id)
+    res_type    = request.form.get('resolution_type', 'investigated')
+    note        = request.form.get('note', '').strip()
+    alert.resolve(current_user, res_type, note)
+    db.session.commit()
+    return jsonify(success=True, new_status=alert.status)
+
+
+@app.route('/fim/alerts/<int:alert_id>/false-positive', methods=['POST'])
+@login_required
+def fim_alert_false_positive(alert_id):
+    alert = _get_alert_for_action(alert_id)
+    note  = request.form.get('note', '').strip()
+    alert.mark_false_positive(current_user, note)
+    db.session.commit()
+    return jsonify(success=True, new_status=alert.status)
+
+
+@app.route('/fim/alerts/<int:alert_id>/escalate', methods=['POST'])
+@login_required
+def fim_alert_escalate(alert_id):
+    alert     = _get_alert_for_action(alert_id)
+    to_uid    = request.form.get('to_user_id', type=int)
+    to_user   = db.session.get(User, to_uid) if to_uid else None
+    if not to_user:
+        return jsonify(success=False, error='Target user not found'), 400
+    alert.escalate(to_user, current_user)
+    db.session.commit()
+    return jsonify(success=True, new_status=alert.status)
+
+
+@app.route('/fim/alerts/<int:alert_id>/assign', methods=['POST'])
+@login_required
+def fim_alert_assign(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    alert   = IntegrityAlert.query.get_or_404(alert_id)
+    to_uid  = request.form.get('to_user_id', type=int)
+    to_user = db.session.get(User, to_uid) if to_uid else None
+    if not to_user:
+        return jsonify(success=False, error='User not found'), 400
+    alert.assign(to_user, current_user)
+    db.session.commit()
+    return jsonify(success=True, assignee=to_user.full_name)
+
+
+@app.route('/fim/alerts/<int:alert_id>/comment', methods=['POST'])
+@login_required
+def fim_alert_comment(alert_id):
+    alert   = _get_alert_for_action(alert_id)
+    text    = request.form.get('comment', '').strip()
+    is_int  = request.form.get('internal', '0') == '1'
+    if not text:
+        return jsonify(success=False, error='Comment cannot be empty'), 400
+    comment = AlertComment(
+        alert_id=alert.id,
+        user_id=current_user.id,
+        comment=text,
+        is_internal=is_int,
+    )
+    db.session.add(comment)
+    db.session.commit()
+    return jsonify(
+        success=True,
+        comment_id=comment.id,
+        author=current_user.full_name,
+        text=text,
+        created_at=comment.created_at.strftime('%b %d, %Y %H:%M'),
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Analytics
+# ---------------------------------------------------------------------------
+@app.route('/fim/analytics')
+@login_required
+def fim_analytics():
+    return render_template('fim/analytics.html')
+
+
+@app.route('/fim/analytics/data')
+@login_required
+def fim_analytics_data():
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 90)
+
+    if current_user.is_admin:
+        alert_q = IntegrityAlert.query
+        check_q = IntegrityCheck.query
+        file_q  = File.query
+    else:
+        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
+        check_q = IntegrityCheck.query.filter(IntegrityCheck.file_id.in_(uid_sub))
+        file_q  = File.query.filter_by(user_id=current_user.id)
+
+    now = datetime.now(timezone.utc)
+
+    # Daily alerts over requested period
+    labels, counts = [], []
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        labels.append(day.strftime('%b %d'))
+        counts.append(alert_q.filter(func.date(IntegrityAlert.raised_at) == str(day)).count())
+
+    # Severity distribution of ALL-TIME open alerts
+    sev_dist = {s: alert_q.filter_by(status='open', severity=s).count()
+                for s in ('critical', 'high', 'medium', 'low', 'info')}
+
+    # File status distribution
+    status_dist = {s: file_q.filter_by(current_status=s).count()
+                   for s in ('ok', 'tampered', 'missing', 'pending', 'error')}
+
+    # Alert type breakdown (all-time)
+    types = {}
+    for t in ('hash_mismatch', 'file_missing', 'double_extension', 'repeated_tampering'):
+        types[t] = alert_q.filter_by(alert_type=t).count()
+
+    # Check stats (last 7 days)
+    week_ago = now - timedelta(days=7)
+    total_chk  = check_q.filter(IntegrityCheck.checked_at >= week_ago).count()
+    passed_chk = check_q.filter(IntegrityCheck.checked_at >= week_ago,
+                                 IntegrityCheck.status == 'ok').count()
+    pass_rate  = round(passed_chk / total_chk * 100, 1) if total_chk else 0
+
+    return jsonify(
+        trend_labels=labels,
+        trend_counts=counts,
+        severity_dist=sev_dist,
+        status_dist=status_dist,
+        type_dist=types,
+        check_pass_rate=pass_rate,
+        total_checks_7d=total_chk,
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Policies
+# ---------------------------------------------------------------------------
+@app.route('/fim/policies')
+@login_required
+def fim_policies():
+    if not current_user.is_admin:
+        abort(403)
+    policies = MonitoringPolicy.query.order_by(MonitoringPolicy.is_default.desc(),
+                                               MonitoringPolicy.name).all()
+    return render_template('fim/policies.html', policies=policies)
+
+
+@app.route('/fim/policies/create', methods=['POST'])
+@login_required
+def fim_policy_create():
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify(success=False, error='Name is required'), 400
+    if MonitoringPolicy.query.filter_by(name=name).first():
+        return jsonify(success=False, error='A policy with that name already exists'), 400
+
+    p = MonitoringPolicy(
+        name                = name,
+        description         = request.form.get('description', '').strip(),
+        check_interval_mins = request.form.get('check_interval_mins', 60, type=int),
+        alert_on_tamper     = request.form.get('alert_on_tamper',      '1') == '1',
+        alert_on_missing    = request.form.get('alert_on_missing',     '1') == '1',
+        alert_on_size_change= request.form.get('alert_on_size_change', '0') == '1',
+        email_alert         = request.form.get('email_alert',          '1') == '1',
+        socket_alert        = request.form.get('socket_alert',         '1') == '1',
+        severity_default    = request.form.get('severity_default',     'high'),
+        retention_days      = request.form.get('retention_days',       365, type=int),
+        excluded_extensions = request.form.get('excluded_extensions',  '').strip(),
+        is_default          = request.form.get('is_default',           '0') == '1',
+        created_by_id       = current_user.id,
+    )
+    db.session.add(p)
+    db.session.commit()
+    return jsonify(success=True, policy_id=p.id, name=p.name)
+
+
+@app.route('/fim/policies/<int:policy_id>/update', methods=['POST'])
+@login_required
+def fim_policy_update(policy_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    p = MonitoringPolicy.query.get_or_404(policy_id)
+
+    p.name                 = request.form.get('name', p.name).strip()
+    p.description          = request.form.get('description', '').strip()
+    p.check_interval_mins  = request.form.get('check_interval_mins', p.check_interval_mins, type=int)
+    p.alert_on_tamper      = request.form.get('alert_on_tamper',      '1') == '1'
+    p.alert_on_missing     = request.form.get('alert_on_missing',     '1') == '1'
+    p.alert_on_size_change = request.form.get('alert_on_size_change', '0') == '1'
+    p.email_alert          = request.form.get('email_alert',          '1') == '1'
+    p.socket_alert         = request.form.get('socket_alert',         '1') == '1'
+    p.severity_default     = request.form.get('severity_default',     p.severity_default)
+    p.retention_days       = request.form.get('retention_days',       p.retention_days, type=int)
+    p.excluded_extensions  = request.form.get('excluded_extensions',  '').strip()
+    p.is_default           = request.form.get('is_default',           '0') == '1'
+    p.updated_at           = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify(success=True)
+
+
+@app.route('/fim/policies/<int:policy_id>/delete', methods=['POST'])
+@login_required
+def fim_policy_delete(policy_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    p = MonitoringPolicy.query.get_or_404(policy_id)
+    if p.is_default:
+        return jsonify(success=False, error='Cannot delete the default policy'), 400
+    File.query.filter_by(policy_id=p.id).update({'policy_id': None})
+    db.session.delete(p)
+    db.session.commit()
+    return jsonify(success=True)
+
+
+# ---------------------------------------------------------------------------
+# FIM — Assign policy to file
+# ---------------------------------------------------------------------------
+@app.route('/fim/file/<int:file_id>/set-policy', methods=['POST'])
+@login_required
+def fim_set_file_policy(file_id):
+    file_rec = File.query.get_or_404(file_id)
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    pid = request.form.get('policy_id', type=int)
+    file_rec.policy_id = pid
+    db.session.commit()
+    return jsonify(success=True)
+
+
+@app.route('/fim/file/<int:file_id>/toggle-monitoring', methods=['POST'])
+@login_required
+def fim_toggle_monitoring(file_id):
+    file_rec = File.query.get_or_404(file_id)
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    file_rec.monitoring_enabled = not file_rec.monitoring_enabled
+    if not file_rec.monitoring_enabled:
+        file_rec.current_status = 'unmonitored'
+    db.session.commit()
+    return jsonify(success=True, enabled=file_rec.monitoring_enabled)
+
+
+# ---------------------------------------------------------------------------
+# FIM — Reports export (CSV)
+# ---------------------------------------------------------------------------
+@app.route('/fim/reports/export')
+@login_required
+def fim_export_report():
+    if current_user.is_admin:
+        alerts = IntegrityAlert.query.order_by(IntegrityAlert.raised_at.desc()).all()
+    else:
+        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        alerts  = (IntegrityAlert.query
+                   .filter(IntegrityAlert.file_id.in_(uid_sub))
+                   .order_by(IntegrityAlert.raised_at.desc()).all())
+
+    buf    = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        'Alert ID', 'Raised At', 'File', 'Alert Type', 'Severity',
+        'Status', 'Expected Hash', 'Found Hash',
+        'Expected Size', 'Found Size', 'Resolved At', 'Resolution Note',
+    ])
+    for a in alerts:
+        fname = a.file.original_name if a.file else ''
+        writer.writerow([
+            a.id,
+            a.raised_at.strftime('%Y-%m-%d %H:%M:%S'),
+            fname,
+            a.alert_type,
+            a.severity,
+            a.status,
+            a.expected_hash or '',
+            a.found_hash    or '',
+            a.expected_size or '',
+            a.found_size    or '',
+            a.resolved_at.strftime('%Y-%m-%d %H:%M:%S') if a.resolved_at else '',
+            a.resolution_note or '',
+        ])
+    output = io.BytesIO(buf.getvalue().encode('utf-8-sig'))
+    fname  = f'fim_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.csv'
+    return send_file(output, mimetype='text/csv', as_attachment=True, download_name=fname)
+
+
+# ---------------------------------------------------------------------------
 # Error handlers
 # ---------------------------------------------------------------------------
 @app.errorhandler(410)
@@ -1686,6 +2463,20 @@ try:
                 db.session.rollback()
 except Exception:
     pass
+
+# Defer FIM startup until after the eventlet hub is running (avoids blocking
+# CLI commands like flask db upgrade that never start the event loop).
+def _start_fim_deferred():
+    with app.app_context():
+        try:
+            from integrity_scheduler import start_scheduler as _fim_start_sched
+            from integrity_watchdog  import start_event_worker as _fim_start_watch
+            _fim_start_sched(app)
+            _fim_start_watch(app)
+        except Exception as _fim_exc:
+            app.logger.warning('FIM startup error (non-fatal): %s', _fim_exc)
+
+eventlet.spawn_after(1, _start_fim_deferred)
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV', 'production') == 'development'
