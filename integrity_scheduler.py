@@ -1,33 +1,33 @@
 # ruff: noqa
 """
-integrity_scheduler.py — APScheduler background jobs for periodic FIM scans.
+integrity_scheduler.py — Eventlet greenthread-based FIM background jobs.
 
-Three jobs run in separate threads inside the APScheduler BackgroundScheduler:
+Replaces APScheduler with plain eventlet.sleep loops so the jobs cooperate
+with the eventlet hub naturally. Each greenthread sleeps first (giving the
+app time to warm up), then alternates between running its scan and sleeping
+for its interval.  DB I/O is non-blocking because psycogreen patches
+psycopg2 to use eventlet's hub for socket waiting.
 
-  fim_periodic   (every 5 min)  — check all files whose next_check_at has passed
-  fim_recovery   (every 15 min) — re-check files that currently have an open alert
-  fim_escalation (every 1 hr)   — auto-escalate stale high/critical alerts
+Three loops:
+  periodic_scan_loop   every 5 min  — files whose next_check_at has passed
+  recovery_scan_loop   every 15 min — files with an open alert
+  escalation_loop      every 1 hr   — auto-escalate stale high/critical alerts
 """
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval    import IntervalTrigger
+import eventlet
 from datetime import datetime, timezone, timedelta
 
 
 # ---------------------------------------------------------------------------
-# Job: periodic scan
+# Job implementations (same logic as before)
 # ---------------------------------------------------------------------------
 
 def _periodic_scan(app_instance) -> None:
-    """
-    Query File rows whose next_check_at <= now (or NULL) and monitoring is on.
-    Runs check_single_file() for each, then run_alert_pipeline() if needed.
-    """
     with app_instance.app_context():
         try:
             from app import db, File
             from integrity_engine import check_single_file, run_alert_pipeline
 
-            now   = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
             files = File.query.filter(
                 File.monitoring_enabled == True,
                 db.or_(
@@ -38,10 +38,7 @@ def _periodic_scan(app_instance) -> None:
 
             for file_rec in files:
                 try:
-                    result = check_single_file(
-                        file_id=file_rec.id,
-                        triggered_by='scheduler',
-                    )
+                    result = check_single_file(file_id=file_rec.id, triggered_by='scheduler')
                     if result['status'] not in ('ok', 'skip'):
                         run_alert_pipeline(file_rec, result)
                     db.session.commit()
@@ -55,16 +52,7 @@ def _periodic_scan(app_instance) -> None:
             app_instance.logger.error('[scheduler] periodic_scan fatal: %s', exc)
 
 
-# ---------------------------------------------------------------------------
-# Job: recovery scan
-# ---------------------------------------------------------------------------
-
 def _recovery_scan(app_instance) -> None:
-    """
-    Re-check every file that has at least one open alert.
-    If the file has recovered (hash matches again) the alert is not
-    auto-closed here — an analyst must do that — but the status is updated.
-    """
     with app_instance.app_context():
         try:
             from app import db, File, IntegrityAlert
@@ -83,10 +71,7 @@ def _recovery_scan(app_instance) -> None:
                 if not file_rec or not file_rec.monitoring_enabled:
                     continue
                 try:
-                    result = check_single_file(
-                        file_id=file_rec.id,
-                        triggered_by='scheduler',
-                    )
+                    result = check_single_file(file_id=file_rec.id, triggered_by='scheduler')
                     if result['status'] not in ('ok', 'skip'):
                         run_alert_pipeline(file_rec, result)
                     db.session.commit()
@@ -100,21 +85,13 @@ def _recovery_scan(app_instance) -> None:
             app_instance.logger.error('[scheduler] recovery_scan fatal: %s', exc)
 
 
-# ---------------------------------------------------------------------------
-# Job: escalation
-# ---------------------------------------------------------------------------
-
 def _escalation_check(app_instance) -> None:
-    """
-    Promote HIGH / CRITICAL alerts to 'escalated' when they have been open
-    for more than 1 hour with no analyst assignment.
-    """
     with app_instance.app_context():
         try:
             from app import db, IntegrityAlert
 
             cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
-            stale  = IntegrityAlert.query.filter(
+            stale = IntegrityAlert.query.filter(
                 IntegrityAlert.status == 'open',
                 IntegrityAlert.severity.in_(['high', 'critical']),
                 IntegrityAlert.raised_at <= cutoff,
@@ -123,7 +100,7 @@ def _escalation_check(app_instance) -> None:
 
             now = datetime.now(timezone.utc)
             for alert in stale:
-                alert.status       = 'escalated'
+                alert.status = 'escalated'
                 alert.escalated_at = now
 
             if stale:
@@ -145,44 +122,41 @@ def _escalation_check(app_instance) -> None:
 # Public bootstrap
 # ---------------------------------------------------------------------------
 
-def start_scheduler(app_instance) -> BackgroundScheduler:
+def start_scheduler(app_instance) -> None:
     """
-    Build and start an APScheduler BackgroundScheduler with the three FIM jobs.
-    Returns the running scheduler (keep a reference to prevent GC).
-    Safe to call once at application startup.
+    Spawn three long-running eventlet greenthreads for FIM background jobs.
+    Each greenthread starts with an initial sleep so the first scan never
+    races with gunicorn's own startup I/O.
     """
-    scheduler = BackgroundScheduler(timezone='UTC')
 
-    scheduler.add_job(
-        _periodic_scan,
-        trigger=IntervalTrigger(minutes=5),
-        args=[app_instance],
-        id='fim_periodic',
-        name='FIM Periodic Scan',
-        replace_existing=True,
-        misfire_grace_time=60,
-    )
+    def periodic_scan_loop():
+        eventlet.sleep(30)          # 30 s warm-up
+        while True:
+            try:
+                _periodic_scan(app_instance)
+            except Exception as exc:
+                app_instance.logger.error('[FIM] periodic loop error: %s', exc)
+            eventlet.sleep(300)     # 5 min between runs
 
-    scheduler.add_job(
-        _recovery_scan,
-        trigger=IntervalTrigger(minutes=15),
-        args=[app_instance],
-        id='fim_recovery',
-        name='FIM Recovery Scan',
-        replace_existing=True,
-        misfire_grace_time=120,
-    )
+    def recovery_scan_loop():
+        eventlet.sleep(60)          # 60 s warm-up
+        while True:
+            try:
+                _recovery_scan(app_instance)
+            except Exception as exc:
+                app_instance.logger.error('[FIM] recovery loop error: %s', exc)
+            eventlet.sleep(900)     # 15 min between runs
 
-    scheduler.add_job(
-        _escalation_check,
-        trigger=IntervalTrigger(hours=1),
-        args=[app_instance],
-        id='fim_escalation',
-        name='FIM Alert Escalation',
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+    def escalation_loop():
+        eventlet.sleep(120)         # 2 min warm-up
+        while True:
+            try:
+                _escalation_check(app_instance)
+            except Exception as exc:
+                app_instance.logger.error('[FIM] escalation loop error: %s', exc)
+            eventlet.sleep(3600)    # 1 hr between runs
 
-    scheduler.start()
-    app_instance.logger.info('[FIM] Scheduler started (periodic/recovery/escalation)')
-    return scheduler
+    eventlet.spawn(periodic_scan_loop)
+    eventlet.spawn(recovery_scan_loop)
+    eventlet.spawn(escalation_loop)
+    app_instance.logger.info('[FIM] Scheduler started — 3 eventlet greenthread loops')

@@ -2444,23 +2444,22 @@ if _admin_email:
     except Exception:
         pass
 
-# Defer FIM startup until after the eventlet hub is running (avoids blocking
-# CLI commands like flask db upgrade that never start the event loop).
+# Defer FIM startup by 1 s so gunicorn's eventlet hub is fully running before
+# we spawn the background greenthreads.  The scheduler uses plain eventlet.sleep
+# loops (no APScheduler threads) so it never blocks the hub.
 def _start_fim_deferred():
-    with app.app_context():
+    try:
+        from integrity_scheduler import start_scheduler as _fim_start_sched
+        _fim_start_sched(app)
+    except Exception as _fim_exc:
+        app.logger.warning('FIM scheduler error (non-fatal): %s', _fim_exc)
+    # Watchdog only in development — inotify C-extension conflicts with eventlet hub.
+    if os.environ.get('FLASK_ENV') == 'development':
         try:
-            from integrity_scheduler import start_scheduler as _fim_start_sched
-            _fim_start_sched(app)
+            from integrity_watchdog import start_event_worker as _fim_start_watch
+            _fim_start_watch(app)
         except Exception as _fim_exc:
-            app.logger.warning('FIM scheduler error (non-fatal): %s', _fim_exc)
-        # Watchdog uses inotify C-extension which can conflict with eventlet hub.
-        # Only run in development; the scheduler handles periodic checks in production.
-        if os.environ.get('FLASK_ENV') == 'development':
-            try:
-                from integrity_watchdog import start_event_worker as _fim_start_watch
-                _fim_start_watch(app)
-            except Exception as _fim_exc:
-                app.logger.warning('FIM watchdog error (non-fatal): %s', _fim_exc)
+            app.logger.warning('FIM watchdog error (non-fatal): %s', _fim_exc)
 
 eventlet.spawn_after(1, _start_fim_deferred)
 
