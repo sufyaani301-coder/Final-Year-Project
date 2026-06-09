@@ -2422,15 +2422,12 @@ def on_disconnect():
 # ---------------------------------------------------------------------------
 try:
     with app.app_context():
-        # Run migrations automatically so no manual "flask db upgrade" is needed
+        # Migrations are run by railway.toml releaseCommand (flask db upgrade).
+        # db.create_all() is a fallback for local dev only.
         try:
-            from flask_migrate import upgrade as _run_migrations
-            _run_migrations()
+            db.create_all()
         except Exception:
-            try:
-                db.create_all()
-            except Exception:
-                pass
+            pass
         # Add columns that predate the current schema (safe to run repeatedly)
         for _stmt in [
             "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
