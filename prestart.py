@@ -73,3 +73,34 @@ with app.app_context():
     except Exception as exc:
         print(f"=== upgrade failed: {exc} ===", flush=True)
         sys.exit(1)
+
+    # Ensure every table exists (safety net if Alembic was stamped without creating tables)
+    print("=== Running db.create_all() ===", flush=True)
+    try:
+        db.create_all()
+        print("=== Tables OK ===", flush=True)
+    except Exception as exc:
+        print(f"=== create_all warning: {exc} ===", flush=True)
+
+    # Legacy schema patches — safe to run repeatedly, fail gracefully
+    for _stmt in [
+        "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
+        "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
+        "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
+    ]:
+        try:
+            db.session.execute(text(_stmt))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    # Data migration: ensure existing admins have super_admin role
+    try:
+        db.session.execute(text(
+            "UPDATE users SET role='super_admin' WHERE is_admin IS TRUE AND (role IS NULL OR role='user')"
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    print("=== prestart complete ===", flush=True)

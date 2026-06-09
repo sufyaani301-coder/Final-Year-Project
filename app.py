@@ -2430,45 +2430,17 @@ def on_disconnect():
 # ---------------------------------------------------------------------------
 # Bootstrap & run
 # ---------------------------------------------------------------------------
-# Skip all DB DDL when imported by prestart.py (SKIP_DB_INIT=1).
-# prestart.py handles migrations via Flask-Migrate Python API before gunicorn starts.
-if not os.environ.get('SKIP_DB_INIT'):
+# All DDL and data migrations are handled by prestart.py before gunicorn starts.
+# Only grant ADMIN_EMAIL here (needs to re-run on every restart).
+_admin_email = os.environ.get('ADMIN_EMAIL', '').strip().lower()
+if _admin_email:
     try:
         with app.app_context():
-            try:
-                db.create_all()
-            except Exception:
-                pass
-            # Add columns that predate the current schema (safe to run repeatedly)
-            for _stmt in [
-                "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
-                "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
-                "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
-            ]:
-                try:
-                    db.session.execute(db.text(_stmt))
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-            # Migrate existing admins to super_admin role
-            try:
-                db.session.execute(db.text(
-                    "UPDATE users SET role='super_admin' WHERE is_admin IS TRUE AND (role IS NULL OR role='user')"
-                ))
+            _admin_user = User.query.filter_by(email=_admin_email).first()
+            if _admin_user and not _admin_user.is_admin:
+                _admin_user.is_admin = True
+                _admin_user.role = 'super_admin'
                 db.session.commit()
-            except Exception:
-                db.session.rollback()
-            # Grant admin to ADMIN_EMAIL if set
-            _admin_email = os.environ.get('ADMIN_EMAIL', '').strip().lower()
-            if _admin_email:
-                try:
-                    _admin_user = User.query.filter_by(email=_admin_email).first()
-                    if _admin_user and not _admin_user.is_admin:
-                        _admin_user.is_admin = True
-                        _admin_user.role = 'super_admin'
-                        db.session.commit()
-                except Exception:
-                    db.session.rollback()
     except Exception:
         pass
 
