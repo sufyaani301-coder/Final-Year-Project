@@ -5,6 +5,13 @@
 # type: ignore
 import eventlet
 eventlet.monkey_patch()
+# Patch psycopg2 to use eventlet-compatible green sockets (required for
+# non-blocking Postgres I/O under the eventlet hub).
+try:
+    import psycogreen.eventlet
+    psycogreen.eventlet.patch_psycopg()
+except ImportError:
+    pass
 import os
 import re
 import secrets
@@ -79,8 +86,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 300,
-    'pool_size': 5,
-    'max_overflow': 0,
+    'pool_size': 2,
+    'max_overflow': 3,
 }
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'vault_uploads')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024    # 50 MB
