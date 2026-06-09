@@ -2439,23 +2439,28 @@ if _admin_email:
     except Exception:
         pass
 
-# Defer FIM startup by 1 s so gunicorn's eventlet hub is fully running before
-# we spawn the background greenthreads.  The scheduler uses plain eventlet.sleep
-# loops (no APScheduler threads) so it never blocks the hub.
-def _start_fim_deferred():
-    print("=== FIM deferred: start ===", flush=True)
+# Start FIM scheduler on the first real HTTP request, not at import time.
+# Using spawn_after at module level caused the eventlet hub to be registered
+# in the gunicorn master process before fork; the copied hub state in the
+# worker then deadlocked when the timer fired.
+_fim_scheduler_started = False
+
+@app.before_request
+def _ensure_fim_started():
+    global _fim_scheduler_started
+    if _fim_scheduler_started:
+        return
+    _fim_scheduler_started = True
+    print("=== FIM: starting scheduler on first request ===", flush=True)
     try:
         from integrity_scheduler import start_scheduler as _fim_start_sched
-        print("=== FIM deferred: calling start_scheduler ===", flush=True)
         _fim_start_sched(app)
-        print("=== FIM deferred: start_scheduler returned ===", flush=True)
+        print("=== FIM: scheduler started ===", flush=True)
     except Exception as _fim_exc:
-        print(f"=== FIM deferred: scheduler error: {_fim_exc} ===", flush=True)
+        print(f"=== FIM: scheduler error: {_fim_exc} ===", flush=True)
         app.logger.warning('FIM scheduler error (non-fatal): %s', _fim_exc)
-    print("=== FIM deferred: done ===", flush=True)
 
 print("=== app.py: module load complete ===", flush=True)
-eventlet.spawn_after(1, _start_fim_deferred)
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV', 'production') == 'development'
