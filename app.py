@@ -11,11 +11,6 @@ import os
 # they deadlock because there is no eventlet hub running during migrations.
 if not os.environ.get('NO_EVENTLET_PATCH'):
     eventlet.monkey_patch()
-    try:
-        import psycogreen.eventlet
-        psycogreen.eventlet.patch_psycopg()
-    except Exception:
-        pass
 import re
 import secrets
 import uuid
