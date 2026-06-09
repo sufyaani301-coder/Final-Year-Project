@@ -1364,6 +1364,24 @@ def delete_file(file_uuid):
         return (jsonify(success=False, error='Forbidden'), 403) if is_ajax else abort(403)
 
     name, stored = rec.original_name, rec.stored_name
+    was_monitored = rec.monitoring_enabled
+
+    # Emit High-severity alert BEFORE cascade-delete wipes the record
+    if was_monitored:
+        try:
+            socketio.emit('integrity_alert', {
+                'alert_id':  None,
+                'type':      'file_deleted',
+                'severity':  'high',
+                'title':     f'Protected file deleted: {name}',
+                'filename':  name,
+                'file_uuid': rec.uuid,
+                'raised_at': datetime.now(timezone.utc).isoformat(),
+                'sound':     True,
+            })
+        except Exception:
+            pass
+
     log_activity('delete', f'Deleted "{name}"')
     db.session.delete(rec)
     db.session.commit()
@@ -1395,8 +1413,56 @@ def rename_file(file_uuid):
     old_name = rec.original_name
     rec.original_name = secure_filename(new_name)
     log_activity('rename', f'Renamed "{old_name}" → "{rec.original_name}"')
+
+    # Generate Medium integrity alert for rename event
+    alert_generated = False
+    if rec.monitoring_enabled:
+        try:
+            baseline = rec.current_baseline
+            chk = IntegrityCheck(
+                file_id              = rec.id,
+                baseline_id          = baseline.id if baseline else None,
+                status               = 'ok',
+                triggered_by         = 'user',
+                triggered_by_user_id = current_user.id,
+                check_duration_ms    = 0,
+            )
+            db.session.add(chk)
+            db.session.flush()
+            alert = IntegrityAlert(
+                file_id      = rec.id,
+                check_id     = chk.id,
+                severity     = 'medium',
+                alert_type   = 'file_renamed',
+                title        = f'File renamed: "{old_name}" → "{rec.original_name}"',
+                description  = (
+                    f'File was renamed by {current_user.full_name}\n'
+                    f'Old name: {old_name}\n'
+                    f'New name: {rec.original_name}'
+                ),
+                expected_hash = baseline.sha256_hash if baseline else '',
+                found_hash    = rec.file_hash,
+            )
+            db.session.add(alert)
+            rec.alert_count += 1
+            db.session.flush()
+            log_activity('tamper_detected', f'[MEDIUM] File renamed: "{old_name}" → "{rec.original_name}"')
+            socketio.emit('integrity_alert', {
+                'alert_id':  alert.id,
+                'type':      'file_renamed',
+                'severity':  'medium',
+                'title':     alert.title,
+                'filename':  rec.original_name,
+                'file_uuid': rec.uuid,
+                'raised_at': alert.raised_at.isoformat(),
+                'sound':     False,
+            })
+            alert_generated = True
+        except Exception as _ren_exc:
+            app.logger.error('Rename alert failed: %s', _ren_exc)
+
     db.session.commit()
-    return jsonify(success=True, name=rec.original_name)
+    return jsonify(success=True, name=rec.original_name, alert_generated=alert_generated)
 
 
 @app.route('/share/<file_uuid>', methods=['POST'])
@@ -1796,6 +1862,50 @@ def fim_manual_check(file_uuid):
             'error':   'Check error — see alert details.',
             'skip':    'Skipped (no baseline).',
         }.get(result['status'], result['status']),
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — Simulate tamper (demo / testing)
+# ---------------------------------------------------------------------------
+@app.route('/fim/simulate-tamper/<file_uuid>', methods=['POST'])
+@login_required
+def fim_simulate_tamper(file_uuid):
+    """Append 4 random bytes to the stored file to trigger hash-mismatch detection."""
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    if not file_rec.monitoring_enabled:
+        return jsonify(success=False, error='Monitoring disabled for this file'), 400
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    if not os.path.exists(filepath):
+        return jsonify(success=False, error='File not found on disk'), 404
+
+    with open(filepath, 'ab') as fh:
+        fh.write(secrets.token_bytes(4))
+
+    from integrity_engine import check_single_file, run_alert_pipeline
+    result = check_single_file(
+        file_id              = file_rec.id,
+        triggered_by         = 'manual',
+        triggered_by_user_id = current_user.id,
+    )
+    if result['status'] not in ('ok', 'skip'):
+        run_alert_pipeline(file_rec, result)
+
+    log_activity('tamper_simulation', f'Simulated tamper on "{file_rec.original_name}" — {result["status"]}')
+    db.session.commit()
+
+    return jsonify(
+        success  = True,
+        status   = result['status'],
+        check_id = result.get('check_id'),
+        message  = {
+            'tampered': '⚠ Hash mismatch — Critical alert raised.',
+            'missing':  '⚠ File missing — High alert raised.',
+            'error':    'Check error — see alert details.',
+        }.get(result['status'], f'Status: {result["status"]}'),
     )
 
 
