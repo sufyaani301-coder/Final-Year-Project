@@ -87,6 +87,15 @@ with app.app_context():
         "ALTER TABLE users ADD COLUMN webauthn_type VARCHAR(20)",
         "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'",
         "ALTER TABLE files ADD COLUMN file_hash VARCHAR(64)",
+        # FIM columns added when integrity monitoring was introduced
+        "ALTER TABLE files ADD COLUMN monitoring_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE files ADD COLUMN policy_id INTEGER",
+        "ALTER TABLE files ADD COLUMN current_status VARCHAR(20) NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE files ADD COLUMN last_checked_at TIMESTAMP",
+        "ALTER TABLE files ADD COLUMN next_check_at TIMESTAMP",
+        "ALTER TABLE files ADD COLUMN check_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE files ADD COLUMN alert_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN default_policy_id INTEGER",
     ]:
         try:
             db.session.execute(text(_stmt))
