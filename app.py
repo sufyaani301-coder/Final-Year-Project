@@ -2292,6 +2292,192 @@ def fim_export_report():
 
 
 # ---------------------------------------------------------------------------
+# FIM — Replace file content (real modification for monitoring demo)
+# ---------------------------------------------------------------------------
+@app.route('/fim/replace/<file_uuid>', methods=['POST'])
+@login_required
+def fim_replace_file(file_uuid):
+    """Upload a new version of the file, overwriting it on disk without updating the baseline.
+    The next integrity check will detect the hash mismatch and raise a Critical alert."""
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    if not file_rec.monitoring_enabled:
+        return jsonify(success=False, error='Monitoring disabled for this file'), 400
+
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify(success=False, error='No replacement file selected'), 400
+    f = request.files['file']
+    if not allowed_file(f.filename):
+        return jsonify(success=False, error='File type not allowed'), 400
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    raw_data = f.read()
+    with open(filepath, 'wb') as fh:
+        fh.write(raw_data)
+    file_rec.size = len(raw_data)
+
+    from integrity_engine import check_single_file, run_alert_pipeline
+    result = check_single_file(
+        file_id              = file_rec.id,
+        triggered_by         = 'manual',
+        triggered_by_user_id = current_user.id,
+    )
+    if result['status'] not in ('ok', 'skip'):
+        run_alert_pipeline(file_rec, result)
+
+    log_activity('tamper_simulation',
+                 f'Replaced file content: "{file_rec.original_name}" — {result["status"]}')
+    db.session.commit()
+
+    return jsonify(
+        success  = True,
+        status   = result['status'],
+        message  = {
+            'tampered': '⚠ Content replaced — hash mismatch detected. Critical alert raised.',
+            'ok':       'Content replaced — hash still matches baseline (same content).',
+            'missing':  '⚠ File error after replace.',
+        }.get(result['status'], f'Status: {result["status"]}'),
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIM — PDF report export
+# ---------------------------------------------------------------------------
+@app.route('/fim/reports/export-pdf')
+@login_required
+def fim_export_pdf():
+    from fpdf import FPDF
+
+    if current_user.is_admin:
+        files_q  = File.query
+        alert_q  = IntegrityAlert.query
+        log_q    = ActivityLog.query
+    else:
+        files_q = File.query.filter_by(user_id=current_user.id)
+        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
+        log_q   = ActivityLog.query.filter_by(user_id=current_user.id)
+
+    all_files   = files_q.all()
+    monitored   = [f for f in all_files if f.monitoring_enabled]
+    all_alerts  = alert_q.order_by(IntegrityAlert.raised_at.desc()).all()
+    open_alerts = [a for a in all_alerts if a.status == 'open']
+    sev_counts  = {s: sum(1 for a in open_alerts if a.severity == s)
+                   for s in ('critical', 'high', 'medium', 'low', 'info')}
+    recent_logs = log_q.order_by(ActivityLog.created_at.desc()).limit(30).all()
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(15, 15, 15)
+
+    # ── Header ──
+    pdf.set_font('Helvetica', 'B', 18)
+    pdf.cell(0, 12, 'FileVault — Integrity Monitoring Report', new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 5, f'Generated: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}',
+             new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(0, 5, f'Prepared for: {current_user.full_name} ({current_user.role_label})',
+             new_x='LMARGIN', new_y='NEXT')
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    # ── Summary stats ──
+    pdf.set_font('Helvetica', 'B', 13)
+    pdf.cell(0, 9, 'Executive Summary', new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('Helvetica', '', 10)
+
+    stat_rows = [
+        ('Total Files',              len(all_files)),
+        ('Monitored Files',          len(monitored)),
+        ('Healthy (OK)',             sum(1 for f in monitored if f.current_status == 'ok')),
+        ('Tampered',                 sum(1 for f in monitored if f.current_status == 'tampered')),
+        ('Missing from Disk',        sum(1 for f in monitored if f.current_status == 'missing')),
+        ('Open Alerts',              len(open_alerts)),
+        ('  Critical',               sev_counts.get('critical', 0)),
+        ('  High',                   sev_counts.get('high', 0)),
+        ('  Medium',                 sev_counts.get('medium', 0)),
+        ('  Low / Info',             sev_counts.get('low', 0) + sev_counts.get('info', 0)),
+        ('Total Alerts (all time)',  len(all_alerts)),
+    ]
+    for label, val in stat_rows:
+        pdf.set_fill_color(245, 245, 245)
+        pdf.cell(110, 7, f'  {label}', border=1, fill=True)
+        pdf.cell(0,   7, str(val),     border=1, new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(6)
+
+    # ── Open alerts table ──
+    if open_alerts:
+        pdf.set_font('Helvetica', 'B', 13)
+        pdf.cell(0, 9, f'Open Alerts ({len(open_alerts)})', new_x='LMARGIN', new_y='NEXT')
+
+        hdrs = ['ID', 'Severity', 'File', 'Owner', 'Type', 'Raised At']
+        wids = [12,   22,          55,     38,       38,     25]
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.set_fill_color(40, 40, 40)
+        pdf.set_text_color(255, 255, 255)
+        for h, w in zip(hdrs, wids):
+            pdf.cell(w, 7, h, border=1, fill=True)
+        pdf.ln()
+
+        pdf.set_font('Helvetica', '', 8)
+        for i, a in enumerate(open_alerts[:40]):
+            pdf.set_fill_color(250, 250, 250) if i % 2 == 0 else pdf.set_fill_color(255, 255, 255)
+            pdf.set_text_color(0, 0, 0)
+            fname  = (a.file.original_name if a.file else 'N/A')[:30]
+            fowner = (a.file.owner.full_name if a.file and a.file.owner else 'N/A')[:20]
+            atype  = a.alert_type.replace('_', ' ').title()[:20]
+            pdf.cell(12, 6, str(a.id), border=1)
+            pdf.cell(22, 6, a.severity.upper(), border=1)
+            pdf.cell(55, 6, fname,  border=1)
+            pdf.cell(38, 6, fowner, border=1)
+            pdf.cell(38, 6, atype,  border=1)
+            pdf.cell(25, 6, a.raised_at.strftime('%m-%d %H:%M'), border=1,
+                     new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(5)
+
+    # ── Recent activity ──
+    if recent_logs:
+        if pdf.get_y() > 220:
+            pdf.add_page()
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font('Helvetica', 'B', 13)
+        pdf.cell(0, 9, 'Recent Activity (last 30 events)', new_x='LMARGIN', new_y='NEXT')
+
+        hdrs2 = ['Date/Time', 'User', 'Action', 'Detail']
+        wids2 = [38, 40, 32, 80]
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.set_fill_color(40, 40, 40)
+        pdf.set_text_color(255, 255, 255)
+        for h, w in zip(hdrs2, wids2):
+            pdf.cell(w, 7, h, border=1, fill=True)
+        pdf.ln()
+
+        pdf.set_font('Helvetica', '', 8)
+        pdf.set_text_color(0, 0, 0)
+        for i, lg in enumerate(recent_logs):
+            pdf.set_fill_color(250, 250, 250) if i % 2 == 0 else pdf.set_fill_color(255, 255, 255)
+            uname  = (lg.user.full_name if lg.user else 'System')[:22]
+            detail = (lg.detail or '')[:45]
+            pdf.cell(38, 6, lg.created_at.strftime('%Y-%m-%d %H:%M'), border=1)
+            pdf.cell(40, 6, uname,  border=1)
+            pdf.cell(32, 6, lg.action.replace('_', ' ')[:18], border=1)
+            pdf.cell(80, 6, detail, border=1, new_x='LMARGIN', new_y='NEXT')
+
+    # ── Footer ──
+    pdf.set_y(-18)
+    pdf.set_font('Helvetica', 'I', 8)
+    pdf.set_text_color(160, 160, 160)
+    pdf.cell(0, 8, 'FileVault Integrity Monitoring System — Confidential', align='C')
+
+    buf  = io.BytesIO(bytes(pdf.output()))
+    fname = f'fim_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.pdf'
+    return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=fname)
+
+
+# ---------------------------------------------------------------------------
 # Error handlers
 # ---------------------------------------------------------------------------
 @app.errorhandler(410)
