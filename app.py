@@ -2448,19 +2448,18 @@ if _admin_email:
 # we spawn the background greenthreads.  The scheduler uses plain eventlet.sleep
 # loops (no APScheduler threads) so it never blocks the hub.
 def _start_fim_deferred():
+    print("=== FIM deferred: start ===", flush=True)
     try:
         from integrity_scheduler import start_scheduler as _fim_start_sched
+        print("=== FIM deferred: calling start_scheduler ===", flush=True)
         _fim_start_sched(app)
+        print("=== FIM deferred: start_scheduler returned ===", flush=True)
     except Exception as _fim_exc:
+        print(f"=== FIM deferred: scheduler error: {_fim_exc} ===", flush=True)
         app.logger.warning('FIM scheduler error (non-fatal): %s', _fim_exc)
-    # Watchdog only in development — inotify C-extension conflicts with eventlet hub.
-    if os.environ.get('FLASK_ENV') == 'development':
-        try:
-            from integrity_watchdog import start_event_worker as _fim_start_watch
-            _fim_start_watch(app)
-        except Exception as _fim_exc:
-            app.logger.warning('FIM watchdog error (non-fatal): %s', _fim_exc)
+    print("=== FIM deferred: done ===", flush=True)
 
+print("=== app.py: module load complete ===", flush=True)
 eventlet.spawn_after(1, _start_fim_deferred)
 
 if __name__ == '__main__':
