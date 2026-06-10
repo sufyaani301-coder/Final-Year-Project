@@ -80,6 +80,7 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 300,
     'pool_size': 2,
     'max_overflow': 3,
+    'connect_args': {'connect_timeout': 10},   # fail fast if DB unreachable
 }
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'vault_uploads')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024    # 50 MB
@@ -2565,27 +2566,39 @@ def fim_replace_file(file_uuid):
         fh.write(raw_data)
     file_rec.size = len(raw_data)
 
-    from integrity_engine import check_single_file, run_alert_pipeline
-    result = check_single_file(
-        file_id              = file_rec.id,
-        triggered_by         = 'manual',
-        triggered_by_user_id = current_user.id,
-    )
-    if result['status'] not in ('ok', 'skip'):
-        run_alert_pipeline(file_rec, result)
-
-    log_activity('tamper_simulation',
-                 f'Replaced file content: "{file_rec.original_name}" — {result["status"]}')
-    db.session.commit()
+    try:
+        db.create_all()
+        from integrity_engine import check_single_file, run_alert_pipeline
+        result = check_single_file(
+            file_id              = file_rec.id,
+            triggered_by         = 'manual',
+            triggered_by_user_id = current_user.id,
+        )
+        if result['status'] not in ('ok', 'skip'):
+            run_alert_pipeline(file_rec, result)
+        log_activity('tamper_simulation',
+                     f'Replaced file content: "{file_rec.original_name}" — {result["status"]}')
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('fim_replace_file check error: %s', exc)
+        # File was already replaced on disk — report that at least
+        return jsonify(
+            success = True,
+            status  = 'replaced',
+            message = f'File replaced on disk. Integrity check failed: {exc}. '
+                      f'Use Capture Baseline to initialise monitoring then Check Now.',
+        )
 
     return jsonify(
         success  = True,
         status   = result['status'],
         message  = {
-            'tampered': '⚠ Content replaced — hash mismatch detected. Critical alert raised.',
+            'tampered': '⚠ Hash mismatch detected — Critical alert raised.',
             'ok':       'Content replaced — hash still matches baseline (same content).',
             'missing':  '⚠ File error after replace.',
-        }.get(result['status'], f'Status: {result["status"]}'),
+            'skip':     'File replaced on disk. No baseline exists yet — click Capture Baseline first.',
+        }.get(result['status'], f'File replaced. Status: {result["status"]}'),
     )
 
 

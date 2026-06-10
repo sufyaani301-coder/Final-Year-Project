@@ -580,13 +580,27 @@ document.getElementById('replaceConfirm')?.addEventListener('click', async () =>
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('file', file);
-  const r = await fetch(`/fim/replace/${_replaceUuid}`, { method: 'POST', body: form });
-  const d = await r.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  let d;
+  try {
+    const r = await fetch(`/fim/replace/${_replaceUuid}`, { method:'POST', body:form, signal:controller.signal });
+    clearTimeout(timeout);
+    d = await r.json();
+  } catch(e) {
+    clearTimeout(timeout);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-file-earmark-arrow-up me-1"></i>Replace & Check Integrity';
+    bootstrap.Modal.getInstance(document.getElementById('replaceModal')).hide();
+    showToast(e.name === 'AbortError' ? 'Timed out after 30s — server is slow. Refresh and try Capture Baseline first.' : 'Network error.', 'danger');
+    return;
+  }
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-file-earmark-arrow-up me-1"></i>Replace & Check Integrity';
   bootstrap.Modal.getInstance(document.getElementById('replaceModal')).hide();
   if (d.success) {
-    showToast(d.message || `Status: ${d.status}`, d.status === 'tampered' ? 'danger' : 'warning');
+    const colour = d.status === 'tampered' ? 'danger' : d.status === 'skip' ? 'warning' : 'success';
+    showToast(d.message || `Status: ${d.status}`, colour);
     setTimeout(() => location.reload(), 1800);
   } else {
     showToast(d.error || 'Replace failed.', 'danger');
