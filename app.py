@@ -842,7 +842,7 @@ def _send_alert_email(file_rec, alert, severity, title):
     owner = db.session.get(User, file_rec.user_id)
     if not owner:
         return
-    if not getattr(owner, 'email_alerts_enabled', True):
+    if getattr(owner, 'email_alerts_enabled', None) is False:
         return
     recipient = owner.alert_email or owner.email
     severity_colour = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
@@ -1003,6 +1003,8 @@ def _fim_raise_alert(file_rec, result):
     existing = IntegrityAlert.query.filter_by(file_id=file_rec.id, status='open').first()
     if existing:
         file_rec.alert_count += 1
+        # Still notify by email even if alert record already exists
+        _send_alert_email(file_rec, existing, existing.severity, existing.title)
         return
 
     severity   = classify_severity(file_rec, chk, result)
