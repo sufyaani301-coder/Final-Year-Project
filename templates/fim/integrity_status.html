@@ -38,7 +38,13 @@
           </div>
           <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
             {{ file.status_badge[0] | safe }}
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2 flex-wrap justify-content-end">
+              {% if not baseline %}
+              <!-- No baseline yet — must capture first -->
+              <button class="btn btn-sm btn-success" onclick="captureBaseline('{{ file.uuid }}', this)">
+                <i class="bi bi-database-add me-1"></i>Capture Baseline
+              </button>
+              {% else %}
               <button class="btn btn-sm btn-outline-info" onclick="runCheck('{{ file.uuid }}', this)">
                 <i class="bi bi-shield-check me-1"></i>Check Now
               </button>
@@ -47,6 +53,7 @@
                       onclick="resetBaseline('{{ file.uuid }}', '{{ file.original_name | e }}')">
                 <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Baseline
               </button>
+              {% endif %}
               {% endif %}
               <a href="{{ url_for('download_file', file_uuid=file.uuid) }}" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-download me-1"></i>Download
@@ -201,18 +208,64 @@
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
+function showToast(message, type='info') {
+  const c = document.getElementById('toastContainer') || (() => {
+    const el = document.createElement('div');
+    el.id='toastContainer'; el.className='toast-container position-fixed bottom-0 end-0 p-3'; el.style.zIndex=1100;
+    document.body.appendChild(el); return el;
+  })();
+  const el = document.createElement('div');
+  el.className=`toast align-items-center text-white bg-${type} border-0`; el.setAttribute('role','alert');
+  el.innerHTML=`<div class="d-flex"><div class="toast-body">${message}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  c.appendChild(el); const t=new bootstrap.Toast(el,{delay:6000}); t.show();
+  el.addEventListener('hidden.bs.toast',()=>el.remove());
+}
+
+async function _post(url) {
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  try {
+    const r = await fetch(url, { method:'POST', body:form });
+    return await r.json();
+  } catch(e) {
+    console.error('FIM request failed:', url, e);
+    return { success:false, error:'Server returned an unexpected response. Check Railway logs for details.' };
+  }
+}
+
+// Capture initial baseline (shown when no baseline exists)
+async function captureBaseline(fileUuid, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Capturing…';
+  const d = await _post(`/fim/baseline/${fileUuid}/capture`);
+  btn.disabled = false; btn.innerHTML = orig;
+  if (d.success) {
+    showToast(d.message, 'success');
+    setTimeout(() => location.reload(), 1400);
+  } else {
+    showToast(d.error || 'Capture failed.', 'danger');
+  }
+}
+
+// Manual integrity check (shown when baseline exists)
 async function runCheck(fileUuid, btn) {
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Checking…';
-  const form = new FormData(); form.append('csrf_token', CSRF);
-  const r = await fetch(`/fim/check/${fileUuid}`, { method:'POST', body:form });
-  const d = await r.json();
+  const d = await _post(`/fim/check/${fileUuid}`);
   btn.disabled = false; btn.innerHTML = orig;
-  showToast(d.message || d.status, d.status === 'ok' ? 'success' : 'warning');
-  if (d.success && d.status !== 'ok') setTimeout(()=>location.reload(), 1500);
+  if (d.success) {
+    const colour = { ok:'success', tampered:'danger', missing:'warning', error:'warning', skip:'warning' };
+    showToast(d.message || d.status, colour[d.status] || 'info');
+    if (d.status !== 'ok') setTimeout(() => location.reload(), 1500);
+  } else {
+    showToast(d.error || 'Check failed.', 'danger');
+  }
 }
 
+// Reset baseline (replaces existing baseline with current on-disk state)
 let _resetUuid = null;
 function resetBaseline(fileUuid, fileName) {
   _resetUuid = fileUuid;
@@ -225,25 +278,17 @@ document.getElementById('resetBaselineConfirm')?.addEventListener('click', async
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('note', document.getElementById('resetNote').value.trim());
-  const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
-  const d = await r.json();
+  let d;
+  try {
+    const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
+    d = await r.json();
+  } catch(e) {
+    console.error('Reset baseline failed:', e);
+    d = { success:false, error:'Server returned an unexpected response. Check Railway logs.' };
+  }
   bootstrap.Modal.getInstance(document.getElementById('resetBaselineModal')).hide();
-  showToast(d.message || d.error, d.success ? 'success' : 'danger');
-  if (d.success) setTimeout(()=>location.reload(), 1200);
+  showToast(d.message || d.error || 'Unknown result.', d.success ? 'success' : 'danger');
+  if (d.success) setTimeout(() => location.reload(), 1200);
 });
-
-function showToast(message, type='info') {
-  const c = document.getElementById('toastContainer') || (() => {
-    const el = document.createElement('div');
-    el.id='toastContainer'; el.className='toast-container position-fixed bottom-0 end-0 p-3'; el.style.zIndex=1100;
-    document.body.appendChild(el); return el;
-  })();
-  const el = document.createElement('div');
-  el.className=`toast align-items-center text-white bg-${type} border-0`; el.setAttribute('role','alert');
-  el.innerHTML=`<div class="d-flex"><div class="toast-body">${message}</div>
-    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
-  c.appendChild(el); const t=new bootstrap.Toast(el,{delay:5000}); t.show();
-  el.addEventListener('hidden.bs.toast',()=>el.remove());
-}
 </script>
 {% endblock %}
