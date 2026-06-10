@@ -155,11 +155,6 @@
                   <i class="bi bi-file-earmark-arrow-up"></i>
                 </button>
                 {% endif %}
-                <!-- Simulate tamper (demo) -->
-                <button class="btn btn-sm btn-outline-warning" title="Simulate unauthorised modification (demo)"
-                        onclick="confirmTamper('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
-                  <i class="bi bi-bug"></i>
-                </button>
                 {% if current_user.is_admin %}
                 <!-- Reset baseline -->
                 <button class="btn btn-sm btn-outline-info" title="Reset baseline"
@@ -285,26 +280,6 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-sm btn-primary" id="renameConfirm">Rename</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Simulate tamper confirm modal -->
-<div class="modal fade" id="tamperModal" tabindex="-1" aria-labelledby="tamperModalLabel">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title" id="tamperModalLabel"><i class="bi bi-bug me-2 text-warning"></i>Simulate Tampering</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <p class="small text-muted mb-1">This will <strong>physically modify</strong> <span id="tamperFileName" class="fw-semibold"></span> on disk (appends 4 random bytes), then immediately run an integrity check.</p>
-        <p class="small text-danger mb-0"><i class="bi bi-exclamation-triangle me-1"></i>A <strong>Critical</strong> alert will be raised. Use "Reset Baseline" afterward to restore clean status.</p>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-sm btn-danger" id="tamperConfirm"><i class="bi bi-bug me-1"></i>Tamper File</button>
       </div>
     </div>
   </div>
@@ -615,30 +590,6 @@ document.getElementById('replaceConfirm')?.addEventListener('click', async () =>
     setTimeout(() => location.reload(), 1800);
   } else {
     showToast(d.error || 'Replace failed.', 'danger');
-  }
-});
-
-// ── Simulate tamper ──
-let _tamperUuid = null, _tamperBtn = null;
-function confirmTamper(uuid, fileName, btn) {
-  _tamperUuid = uuid; _tamperBtn = btn;
-  document.getElementById('tamperFileName').textContent = `"${fileName}"`;
-  new bootstrap.Modal(document.getElementById('tamperModal')).show();
-}
-document.getElementById('tamperConfirm')?.addEventListener('click', async () => {
-  if (!_tamperUuid) return;
-  bootstrap.Modal.getInstance(document.getElementById('tamperModal')).hide();
-  if (_tamperBtn) { _tamperBtn.disabled = true; _tamperBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  const r = await fetch(`/fim/simulate-tamper/${_tamperUuid}`, { method: 'POST', body: form });
-  const d = await r.json();
-  if (_tamperBtn) { _tamperBtn.disabled = false; _tamperBtn.innerHTML = '<i class="bi bi-bug"></i>'; }
-  if (d.success) {
-    showToast(d.message || `Status: ${d.status}`, d.status === 'tampered' ? 'danger' : 'warning');
-    setTimeout(() => location.reload(), 1800);
-  } else {
-    showToast(d.error || 'Simulation failed.', 'danger');
   }
 });
 
