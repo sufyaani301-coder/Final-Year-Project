@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+{% block title %}Edit — {{ file.original_name }}{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper" style="height:100vh;overflow:hidden">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column" style="overflow:hidden">
+    <!-- Top nav -->
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3 flex-shrink-0">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <nav aria-label="breadcrumb" class="flex-grow-1">
+        <ol class="breadcrumb mb-0 small">
+          <li class="breadcrumb-item"><a href="{{ url_for('fim_monitoring') }}">Monitored Files</a></li>
+          <li class="breadcrumb-item"><a href="{{ url_for('fim_file_status', file_id=file.id) }}" class="text-truncate d-inline-block" style="max-width:180px">{{ file.original_name }}</a></li>
+          <li class="breadcrumb-item active">Edit</li>
+        </ol>
+      </nav>
+      <button class="theme-toggle border-0 flex-shrink-0"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area px-4 pt-3 pb-4 flex-grow-1 d-flex flex-column" style="overflow:hidden">
+
+      <!-- Header card -->
+      <div class="chart-card mb-3 flex-shrink-0">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <div class="p-2 rounded-3 flex-shrink-0" style="background:var(--surface-alt,var(--surface))">
+            <i class="bi {{ file.icon }} fs-3"></i>
+          </div>
+          <div class="flex-grow-1 min-w-0">
+            <h6 class="fw-bold mb-0 text-truncate" title="{{ file.original_name }}">{{ file.original_name }}</h6>
+            <small class="text-muted">{{ file.size_human }} &middot; <span class="font-monospace text-uppercase">{{ ext }}</span> &middot; Editing in browser</small>
+          </div>
+          <div class="d-flex gap-2 flex-shrink-0">
+            <a href="{{ url_for('fim_file_status', file_id=file.id) }}" class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-x-lg me-1"></i>Cancel
+            </a>
+            <button id="saveBtn" class="btn btn-sm btn-primary">
+              <i class="bi bi-floppy me-1"></i>Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIM warning -->
+      {% if file.current_baseline %}
+      <div class="alert alert-warning py-2 px-3 mb-3 small flex-shrink-0" role="alert">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <strong>Integrity monitoring active.</strong>
+        Saving changes will modify the file on disk. The integrity check will detect a hash mismatch and raise a <strong>Tampered</strong> alert.
+        Admins can reset the baseline afterward to accept the new content.
+      </div>
+      {% else %}
+      <div class="alert alert-info py-2 px-3 mb-3 small flex-shrink-0" role="alert">
+        <i class="bi bi-info-circle-fill me-1"></i>
+        No baseline captured yet — saving will not raise an alert.
+        After saving, click <strong>Capture Baseline</strong> on the file detail page to start monitoring.
+      </div>
+      {% endif %}
+
+      <!-- CodeMirror editor -->
+      <div class="chart-card flex-grow-1 d-flex flex-column p-0" style="overflow:hidden;min-height:300px">
+        <div id="editorWrap" style="flex:1;overflow:hidden;border-radius:inherit"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1100"></div>
+
+<!-- Hidden textarea holds raw content (avoids XSS via Jinja | safe) -->
+<textarea id="rawContent" style="display:none">{{ content }}</textarea>
+
+<!-- CodeMirror 5 -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js"></script>
+
+<style>
+.CodeMirror {
+  height: 100%;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13.5px;
+  line-height: 1.65;
+  border-radius: inherit;
+}
+#editorWrap, #editorWrap .CodeMirror {
+  height: 100%;
+  min-height: 300px;
+}
+</style>
+
+<script>
+const CSRF     = document.querySelector('meta[name="csrf-token"]')?.content || '';
+const FILE_UUID = '{{ file.uuid }}';
+const CM_MODE   = '{{ cm_mode }}';
+
+const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+const editor = CodeMirror(document.getElementById('editorWrap'), {
+  value:            document.getElementById('rawContent').value,
+  mode:             CM_MODE,
+  theme:            isDark ? 'dracula' : 'default',
+  lineNumbers:      true,
+  lineWrapping:     true,
+  matchBrackets:    true,
+  autoCloseBrackets:true,
+  tabSize:          2,
+  indentWithTabs:   false,
+  extraKeys: { 'Ctrl-S': saveFile, 'Cmd-S': saveFile },
+});
+editor.setSize('100%', '100%');
+
+// Sync CodeMirror theme with app dark-mode toggle
+new MutationObserver(() => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  editor.setOption('theme', dark ? 'dracula' : 'default');
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+function showToast(msg, type = 'info') {
+  const c  = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast align-items-center text-white bg-${type} border-0`;
+  el.setAttribute('role', 'alert');
+  el.innerHTML = `<div class="d-flex"><div class="toast-body">${msg}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  c.appendChild(el);
+  const t = new bootstrap.Toast(el, { delay: 8000 });
+  t.show();
+  el.addEventListener('hidden.bs.toast', () => el.remove());
+}
+
+async function saveFile() {
+  const btn  = document.getElementById('saveBtn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('content', editor.getValue());
+
+  try {
+    const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
+    const d = await r.json();
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    if (d.success) {
+      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger', replaced:'info' };
+      showToast(d.message, colours[d.status] || 'info');
+    } else {
+      showToast(d.error || 'Save failed.', 'danger');
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    showToast('Network error — file may not have been saved.', 'danger');
+  }
+}
+
+document.getElementById('saveBtn').addEventListener('click', saveFile);
+</script>
+{% endblock %}

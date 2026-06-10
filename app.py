@@ -137,6 +137,10 @@ ALLOWED_EXTENSIONS = {
     'txt', 'csv', 'json', 'xml', 'zip', 'rar', 'mp4', 'mp3'
 }
 
+# Text file types that can be edited in the browser
+EDITABLE_EXTENSIONS = {'txt', 'csv', 'json', 'xml'}
+EDITOR_SIZE_LIMIT   = 512 * 1024  # 512 KB
+
 ACTION_ICONS = {
     'upload':   ('bi-cloud-upload-fill',  'text-primary'),
     'download': ('bi-cloud-download-fill','text-info'),
@@ -2600,6 +2604,101 @@ def fim_replace_file(file_uuid):
             'skip':     'File replaced on disk. No baseline exists yet — click Capture Baseline first.',
         }.get(result['status'], f'File replaced. Status: {result["status"]}'),
     )
+
+
+# ---------------------------------------------------------------------------
+# Inline file editor (text files only)
+# ---------------------------------------------------------------------------
+@app.route('/file/<file_uuid>/edit', methods=['GET'])
+@login_required
+def edit_file_page(file_uuid):
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        abort(403)
+
+    ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
+    if ext not in EDITABLE_EXTENSIONS:
+        flash('This file type cannot be edited in the browser.', 'warning')
+        return redirect(url_for('fim_monitoring'))
+
+    if file_rec.size > EDITOR_SIZE_LIMIT:
+        flash('File is too large to edit in the browser (limit: 512 KB).', 'warning')
+        return redirect(url_for('fim_file_status', file_id=file_rec.id))
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    if not os.path.exists(filepath):
+        flash('File not found on disk.', 'danger')
+        return redirect(url_for('fim_file_status', file_id=file_rec.id))
+
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as fh:
+            content = fh.read()
+    except Exception as exc:
+        flash(f'Could not read file: {exc}', 'danger')
+        return redirect(url_for('fim_file_status', file_id=file_rec.id))
+
+    cm_mode = {'json': 'application/json', 'xml': 'application/xml'}.get(ext, 'text/plain')
+    return render_template('fim/edit_file.html',
+        file=file_rec, content=content, cm_mode=cm_mode, ext=ext)
+
+
+@app.route('/file/<file_uuid>/edit', methods=['POST'])
+@login_required
+def edit_file_save(file_uuid):
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+
+    ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
+    if ext not in EDITABLE_EXTENSIONS:
+        return jsonify(success=False, error='File type not editable in browser'), 400
+
+    content  = request.form.get('content', '')
+    raw_data = content.encode('utf-8')
+    if len(raw_data) > EDITOR_SIZE_LIMIT:
+        return jsonify(success=False, error='Content too large (max 512 KB)'), 400
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    try:
+        with open(filepath, 'wb') as fh:
+            fh.write(raw_data)
+        file_rec.size = len(raw_data)
+    except Exception as exc:
+        return jsonify(success=False, error=f'Could not write file: {exc}'), 500
+
+    check_status  = 'skip'
+    check_message = 'File saved. No baseline exists — click Capture Baseline to start monitoring.'
+    try:
+        db.create_all()
+        from integrity_engine import check_single_file, run_alert_pipeline
+        result = check_single_file(
+            file_id=file_rec.id,
+            triggered_by='manual',
+            triggered_by_user_id=current_user.id,
+        )
+        check_status = result['status']
+        if check_status not in ('ok', 'skip'):
+            run_alert_pipeline(file_rec, result)
+        check_message = {
+            'ok':       'File saved. Content matches baseline (same content as baseline).',
+            'tampered': '⚠ File saved. Hash mismatch — integrity alert raised.',
+            'missing':  '⚠ File saved but integrity check reports file missing.',
+            'error':    'File saved. Integrity check encountered an error.',
+            'skip':     'File saved. No baseline — click Capture Baseline to start monitoring.',
+        }.get(check_status, f'File saved. Status: {check_status}')
+        log_activity('upload', f'Edited "{file_rec.original_name}" in browser ({format_bytes(len(raw_data))})')
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('edit_file_save check error: %s', exc)
+        try:
+            log_activity('upload', f'Edited "{file_rec.original_name}" in browser')
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        check_message = f'File saved. Integrity check failed: {exc}'
+
+    return jsonify(success=True, status=check_status, message=check_message)
 
 
 # ---------------------------------------------------------------------------
