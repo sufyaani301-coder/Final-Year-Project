@@ -888,6 +888,30 @@ code, .font-monospace {
 [data-theme="dark"] .badge.bg-info      { background: rgba(56,189,248,.15) !important; color: #7dd3fc !important; }
 [data-theme="dark"] .badge.bg-secondary { background: rgba(161,161,170,.15) !important; color: #d4d4d8 !important; }
 
+/* FIM status badges */
+.badge-ok        { background: #d1fae5; color: #065f46; }
+.badge-tampered  { background: #fee2e2; color: #991b1b; }
+.badge-missing   { background: #fef9c3; color: #854d0e; }
+.badge-error     { background: #ffedd5; color: #9a3412; }
+.badge-pending   { background: #f1f5f9; color: #475569; }
+[data-theme="dark"] .badge-ok       { background: #064e3b; color: #34d399; }
+[data-theme="dark"] .badge-tampered { background: #450a0a; color: #f87171; }
+[data-theme="dark"] .badge-missing  { background: #451a03; color: #fbbf24; }
+[data-theme="dark"] .badge-error    { background: #431407; color: #fb923c; }
+[data-theme="dark"] .badge-pending  { background: #1e293b; color: #94a3b8; }
+
+/* FIM alert severity badges */
+.badge-critical  { background: #fee2e2; color: #7f1d1d; }
+.badge-high      { background: #ffedd5; color: #7c2d12; }
+.badge-medium    { background: #fef9c3; color: #713f12; }
+.badge-low       { background: #dbeafe; color: #1e3a5f; }
+.badge-info      { background: #f1f5f9; color: #334155; }
+[data-theme="dark"] .badge-critical { background: #450a0a; color: #f87171; }
+[data-theme="dark"] .badge-high     { background: #431407; color: #fb923c; }
+[data-theme="dark"] .badge-medium   { background: #451a03; color: #fbbf24; }
+[data-theme="dark"] .badge-low      { background: #172554; color: #93c5fd; }
+[data-theme="dark"] .badge-info     { background: #1e293b; color: #94a3b8; }
+
 /* ── 20. Alerts ───────────────────────────────────────────────────── */
 .alert {
   border-radius: var(--radius-sm);
