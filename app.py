@@ -1887,7 +1887,6 @@ def fim_manual_check(file_uuid):
         return jsonify(success=False, error='Forbidden'), 403
 
     try:
-        db.create_all()
         result = check_single_file(
             file_id=file_rec.id,
             triggered_by='manual',
@@ -1974,7 +1973,6 @@ def fim_capture_baseline(file_uuid):
     if not os.path.exists(filepath):
         return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
     try:
-        db.create_all()  # ensure FIM tables exist
         baseline = capture_baseline(file_rec, current_user, reason='manual_capture')
         if baseline is None:
             return jsonify(success=False, error='Hash computation failed — check server logs'), 500
@@ -2001,7 +1999,6 @@ def fim_reset_baseline(file_uuid):
         return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
     note = request.form.get('note', '').strip()
     try:
-        db.create_all()
         ok = accept_new_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
         if not ok:
             return jsonify(success=False, error='Hash computation failed — check server logs'), 500
@@ -2571,7 +2568,6 @@ def fim_replace_file(file_uuid):
     file_rec.size = len(raw_data)
 
     try:
-        db.create_all()
         from integrity_engine import check_single_file, run_alert_pipeline
         result = check_single_file(
             file_id              = file_rec.id,
@@ -2669,7 +2665,6 @@ def edit_file_save(file_uuid):
     check_status  = 'skip'
     check_message = 'File saved. No baseline exists — click Capture Baseline to start monitoring.'
     try:
-        db.create_all()
         from integrity_engine import check_single_file, run_alert_pipeline
         result = check_single_file(
             file_id=file_rec.id,
