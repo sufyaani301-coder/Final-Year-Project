@@ -1492,15 +1492,16 @@ def upload_file():
     save_path     = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
     raw_data      = f.read()
     sha256_hash   = hashlib.sha256(raw_data).hexdigest()
+    disk_data     = fernet.encrypt(raw_data) if fernet else raw_data
     with open(save_path, 'wb') as fh:
-        fh.write(raw_data)
-    size = len(raw_data)
+        fh.write(disk_data)
+    size = len(raw_data)  # quota uses plaintext size
     mime = mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
 
     try:
         rec = File(original_name=original_name, stored_name=stored_name,
                    size=size, mimetype=mime, user_id=current_user.id,
-                   is_encrypted=False, file_hash=sha256_hash)
+                   is_encrypted=bool(fernet), file_hash=sha256_hash)
         db.session.add(rec)
         log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)})')
         db.session.commit()
@@ -1532,6 +1533,9 @@ def download_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
         abort(403)
+    if rec.is_encrypted:
+        flash('This file is encrypted. Use the "Decrypt & Download" button and enter your password.', 'warning')
+        return redirect(url_for('fim_monitoring'))
     log_activity('download', f'Downloaded "{rec.original_name}"')
     db.session.commit()
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
@@ -1550,10 +1554,24 @@ def decrypt_file(file_uuid):
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
     if not os.path.exists(file_path):
         return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
-    log_activity('download', f'Downloaded "{rec.original_name}"')
+    with open(file_path, 'rb') as fh:
+        data = fh.read()
+    if rec.is_encrypted:
+        if not fernet:
+            return jsonify(success=False, error='Encryption key not configured on server.'), 500
+        try:
+            data = fernet.decrypt(data)
+        except Exception:
+            return jsonify(success=False, error='Decryption failed — file may be corrupted or key mismatch.'), 500
+    log_activity('download', f'Downloaded (decrypted) "{rec.original_name}"')
     db.session.commit()
-    return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
-                               as_attachment=True, download_name=rec.original_name)
+    from io import BytesIO
+    return send_file(
+        BytesIO(data),
+        as_attachment=True,
+        download_name=rec.original_name,
+        mimetype=rec.mimetype or 'application/octet-stream',
+    )
 
 
 @app.route('/preview-auth/<file_uuid>', methods=['POST'])
@@ -2097,48 +2115,6 @@ def fim_manual_check(file_uuid):
             'error':   'Check error — see alert details.',
             'skip':    'No baseline yet — use Capture Baseline first.',
         }.get(result['status'], result['status']),
-    )
-
-
-# ---------------------------------------------------------------------------
-# FIM — Simulate tamper (demo / testing)
-# ---------------------------------------------------------------------------
-@app.route('/fim/simulate-tamper/<file_uuid>', methods=['POST'])
-@login_required
-def fim_simulate_tamper(file_uuid):
-    """Append 4 random bytes to the stored file to trigger hash-mismatch detection."""
-    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        return jsonify(success=False, error='Forbidden'), 403
-    if not file_rec.monitoring_enabled:
-        return jsonify(success=False, error='Monitoring disabled for this file'), 400
-
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
-    if not os.path.exists(filepath):
-        return jsonify(success=False, error='File not found on disk'), 404
-
-    with open(filepath, 'ab') as fh:
-        fh.write(secrets.token_bytes(4))
-
-    result = _fim_check_file(file_rec,
-        triggered_by='manual',
-        triggered_by_user_id=current_user.id,
-    )
-    if result['status'] not in ('ok', 'skip'):
-        _fim_raise_alert(file_rec, result)
-
-    log_activity('tamper_simulation', f'Simulated tamper on "{file_rec.original_name}" — {result["status"]}')
-    db.session.commit()
-
-    return jsonify(
-        success  = True,
-        status   = result['status'],
-        check_id = result.get('check_id'),
-        message  = {
-            'tampered': '⚠ Hash mismatch — Critical alert raised.',
-            'missing':  '⚠ File missing — High alert raised.',
-            'error':    'Check error — see alert details.',
-        }.get(result['status'], f'Status: {result["status"]}'),
     )
 
 
@@ -2806,8 +2782,11 @@ def edit_file_page(file_uuid):
         return redirect(url_for('fim_file_status', file_id=file_rec.id))
 
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as fh:
-            content = fh.read()
+        with open(filepath, 'rb') as fh:
+            raw = fh.read()
+        if file_rec.is_encrypted and fernet:
+            raw = fernet.decrypt(raw)
+        content = raw.decode('utf-8', errors='replace')
     except Exception as exc:
         flash(f'Could not read file: {exc}', 'danger')
         return redirect(url_for('fim_file_status', file_id=file_rec.id))
@@ -2834,10 +2813,12 @@ def edit_file_save(file_uuid):
         return jsonify(success=False, error='Content too large (max 512 KB)'), 400
 
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    # re-encrypt if file was stored encrypted
+    disk_data = fernet.encrypt(raw_data) if (file_rec.is_encrypted and fernet) else raw_data
     try:
         with open(filepath, 'wb') as fh:
-            fh.write(raw_data)
-        file_rec.size = len(raw_data)
+            fh.write(disk_data)
+        file_rec.size = len(raw_data)  # keep plaintext size
     except Exception as exc:
         return jsonify(success=False, error=f'Could not write file: {exc}'), 500
 
