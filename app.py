@@ -830,6 +830,196 @@ def _apply_type_filter(q, type_filter):
 
 
 # ---------------------------------------------------------------------------
+# FIM helpers — defined here so db/models are always in scope (no circular import)
+# ---------------------------------------------------------------------------
+def _fim_capture_baseline(file_rec, user, reason='upload'):
+    """Hash the file and write an IntegrityBaseline row. Does NOT commit."""
+    from integrity_engine import hash_file as _hash_file
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    try:
+        hex_digest, size_bytes, _ = _hash_file(filepath)
+    except Exception as exc:
+        app.logger.error('baseline capture failed for %s: %s', file_rec.stored_name, exc)
+        return None
+
+    old = IntegrityBaseline.query.filter_by(file_id=file_rec.id, is_current=True).first()
+    if old:
+        old.is_current       = False
+        old.superseded_at    = datetime.now(timezone.utc)
+        old.superseded_by_id = user.id if user else None
+        old.supersede_note   = f'Superseded by new {reason}'
+
+    baseline = IntegrityBaseline(
+        file_id         = file_rec.id,
+        sha256_hash     = hex_digest,
+        file_size_bytes = size_bytes,
+        is_current      = True,
+        captured_by_id  = user.id if user else None,
+        capture_reason  = reason,
+    )
+    db.session.add(baseline)
+    file_rec.current_status  = 'ok'
+    file_rec.last_checked_at = datetime.now(timezone.utc)
+    file_rec.file_hash       = hex_digest
+    return baseline
+
+
+def _fim_check_file(file_rec, triggered_by='manual', triggered_by_user_id=None):
+    """Re-hash file vs baseline, write IntegrityCheck row. Does NOT commit."""
+    from integrity_engine import hash_file as _hash_file
+
+    baseline = IntegrityBaseline.query.filter_by(
+        file_id=file_rec.id, is_current=True
+    ).first()
+    if not baseline:
+        return {'status': 'skip', 'reason': 'no_baseline'}
+
+    filepath     = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    computed     = None
+    cur_size     = None
+    duration_ms  = 0
+    status       = 'ok'
+    error_msg    = None
+
+    try:
+        import time as _time
+        t0 = _time.monotonic()
+        computed, cur_size, duration_ms = _hash_file(filepath)
+        if computed != baseline.sha256_hash:
+            status = 'tampered'
+    except FileNotFoundError:
+        status    = 'missing'
+        error_msg = 'File not found on disk'
+    except Exception as exc:
+        status    = 'error'
+        error_msg = str(exc)[:200]
+
+    chk = IntegrityCheck(
+        file_id              = file_rec.id,
+        baseline_id          = baseline.id,
+        computed_sha256      = computed,
+        file_size_at_check   = cur_size,
+        status               = status,
+        triggered_by         = triggered_by,
+        triggered_by_user_id = triggered_by_user_id,
+        check_duration_ms    = duration_ms,
+        error_message        = error_msg,
+    )
+    db.session.add(chk)
+
+    now = datetime.now(timezone.utc)
+    file_rec.last_checked_at = now
+    file_rec.check_count    += 1
+    file_rec.current_status  = status
+    interval = file_rec.policy.check_interval_mins if file_rec.policy else 60
+    file_rec.next_check_at   = now + timedelta(minutes=interval)
+    db.session.flush()
+
+    return {
+        'status':        status,
+        'check_id':      chk.id,
+        'file_id':       file_rec.id,
+        'computed_hash': computed,
+        'baseline_hash': baseline.sha256_hash,
+        'expected_size': baseline.file_size_bytes,
+        'current_size':  cur_size,
+        'error_msg':     error_msg,
+    }
+
+
+def _fim_raise_alert(file_rec, result):
+    """Create IntegrityAlert for a failed check, emit SocketIO. Does NOT commit."""
+    from integrity_engine import classify_severity, classify_alert_type
+
+    status   = result['status']
+    check_id = result.get('check_id')
+    if status in ('ok', 'skip') or not check_id:
+        return
+
+    chk = IntegrityCheck.query.get(check_id)
+    if not chk:
+        return
+
+    existing = IntegrityAlert.query.filter_by(file_id=file_rec.id, status='open').first()
+    if existing:
+        file_rec.alert_count += 1
+        return
+
+    severity   = classify_severity(file_rec, chk, result)
+    alert_type = classify_alert_type(file_rec, chk)
+    baseline   = IntegrityBaseline.query.filter_by(file_id=file_rec.id, is_current=True).first()
+
+    title = {
+        'hash_mismatch':      f'File tampered: {file_rec.original_name}',
+        'file_missing':       f'File deleted from disk: {file_rec.original_name}',
+        'double_extension':   f'Double-extension attack: {file_rec.original_name}',
+        'repeated_tampering': f'Repeated tampering: {file_rec.original_name}',
+    }.get(alert_type, f'Integrity violation: {file_rec.original_name}')
+
+    alert = IntegrityAlert(
+        file_id       = file_rec.id,
+        check_id      = chk.id,
+        severity      = severity,
+        alert_type    = alert_type,
+        title         = title,
+        expected_hash = baseline.sha256_hash if baseline else '',
+        found_hash    = result.get('computed_hash'),
+        expected_size = result.get('expected_size'),
+        found_size    = result.get('current_size'),
+    )
+    db.session.add(alert)
+    file_rec.alert_count += 1
+    db.session.flush()
+
+    try:
+        socketio.emit('integrity_alert', {
+            'alert_id':  alert.id,
+            'type':      alert_type,
+            'severity':  severity,
+            'title':     title,
+            'filename':  file_rec.original_name,
+            'file_uuid': file_rec.uuid,
+            'raised_at': alert.raised_at.isoformat(),
+            'sound':     severity == 'critical',
+        })
+    except Exception as exc:
+        app.logger.error('SocketIO emit failed: %s', exc)
+
+
+def _fim_accept_baseline(file_rec, user, note=''):
+    """Accept current on-disk state as new trusted baseline. Does NOT commit."""
+    from integrity_engine import hash_file as _hash_file
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    try:
+        new_hash, new_size, _ = _hash_file(filepath)
+    except Exception:
+        return False
+
+    old = IntegrityBaseline.query.filter_by(file_id=file_rec.id, is_current=True).first()
+    if old:
+        old.is_current       = False
+        old.superseded_at    = datetime.now(timezone.utc)
+        old.superseded_by_id = user.id
+        old.supersede_note   = note
+
+    db.session.add(IntegrityBaseline(
+        file_id         = file_rec.id,
+        sha256_hash     = new_hash,
+        file_size_bytes = new_size,
+        is_current      = True,
+        captured_by_id  = user.id,
+        capture_reason  = 'admin_override',
+    ))
+    file_rec.current_status = 'ok'
+    file_rec.file_hash      = new_hash
+
+    for a in IntegrityAlert.query.filter_by(file_id=file_rec.id, status='open').all():
+        a.resolve(user, 'baseline_updated', note)
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Template context processors
 # ---------------------------------------------------------------------------
 @app.context_processor
@@ -1322,8 +1512,7 @@ def upload_file():
 
     # Capture FIM baseline immediately after upload
     try:
-        from integrity_engine import capture_baseline as _cap_baseline
-        _cap_baseline(rec, current_user, reason='upload')
+        _fim_capture_baseline(rec, current_user, reason='upload')
         db.session.commit()
     except Exception as _fim_exc:
         app.logger.warning('FIM baseline capture failed for "%s": %s', original_name, _fim_exc)
@@ -1880,20 +2069,17 @@ def fim_file_status(file_id):
 @app.route('/fim/check/<file_uuid>', methods=['POST'])
 @login_required
 def fim_manual_check(file_uuid):
-    from integrity_engine import check_single_file, run_alert_pipeline
-
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         return jsonify(success=False, error='Forbidden'), 403
 
     try:
-        result = check_single_file(
-            file_id=file_rec.id,
+        result = _fim_check_file(file_rec,
             triggered_by='manual',
             triggered_by_user_id=current_user.id,
         )
         if result['status'] not in ('ok', 'skip'):
-            run_alert_pipeline(file_rec, result)
+            _fim_raise_alert(file_rec, result)
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -1934,14 +2120,12 @@ def fim_simulate_tamper(file_uuid):
     with open(filepath, 'ab') as fh:
         fh.write(secrets.token_bytes(4))
 
-    from integrity_engine import check_single_file, run_alert_pipeline
-    result = check_single_file(
-        file_id              = file_rec.id,
-        triggered_by         = 'manual',
-        triggered_by_user_id = current_user.id,
+    result = _fim_check_file(file_rec,
+        triggered_by='manual',
+        triggered_by_user_id=current_user.id,
     )
     if result['status'] not in ('ok', 'skip'):
-        run_alert_pipeline(file_rec, result)
+        _fim_raise_alert(file_rec, result)
 
     log_activity('tamper_simulation', f'Simulated tamper on "{file_rec.original_name}" — {result["status"]}')
     db.session.commit()
@@ -1965,7 +2149,6 @@ def fim_simulate_tamper(file_uuid):
 @login_required
 def fim_capture_baseline(file_uuid):
     """Capture an initial baseline for a PENDING file (no existing baseline required)."""
-    from integrity_engine import capture_baseline, hash_file
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         return jsonify(success=False, error='Forbidden'), 403
@@ -1973,7 +2156,7 @@ def fim_capture_baseline(file_uuid):
     if not os.path.exists(filepath):
         return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
     try:
-        baseline = capture_baseline(file_rec, current_user, reason='manual_capture')
+        baseline = _fim_capture_baseline(file_rec, current_user, reason='manual_capture')
         if baseline is None:
             return jsonify(success=False, error='Hash computation failed — check server logs'), 500
         log_activity('baseline_reset', f'Captured initial baseline for "{file_rec.original_name}"')
@@ -1990,7 +2173,6 @@ def fim_capture_baseline(file_uuid):
 @app.route('/fim/baseline/<file_uuid>/reset', methods=['POST'])
 @login_required
 def fim_reset_baseline(file_uuid):
-    from integrity_engine import accept_new_baseline
     if not current_user.is_admin:
         return jsonify(success=False, error='Admin required'), 403
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
@@ -1999,7 +2181,7 @@ def fim_reset_baseline(file_uuid):
         return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
     note = request.form.get('note', '').strip()
     try:
-        ok = accept_new_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
+        ok = _fim_accept_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
         if not ok:
             return jsonify(success=False, error='Hash computation failed — check server logs'), 500
         log_activity('baseline_reset', f'Reset baseline for "{file_rec.original_name}"')
@@ -2476,8 +2658,7 @@ def admin_approve_change_request(req_id):
                 dst = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
                 if os.path.exists(src):
                     shutil.move(src, dst)
-            from integrity_engine import capture_baseline
-            capture_baseline(file_rec, current_user, reason='authorized_replace')
+            _fim_capture_baseline(file_rec, current_user, reason='authorized_replace')
             log_activity('tamper_simulation',
                          f'[AUTHORIZED] Replaced "{file_rec.original_name}" (req #{cr.id})')
 
@@ -2568,14 +2749,12 @@ def fim_replace_file(file_uuid):
     file_rec.size = len(raw_data)
 
     try:
-        from integrity_engine import check_single_file, run_alert_pipeline
-        result = check_single_file(
-            file_id              = file_rec.id,
-            triggered_by         = 'manual',
-            triggered_by_user_id = current_user.id,
+        result = _fim_check_file(file_rec,
+            triggered_by='manual',
+            triggered_by_user_id=current_user.id,
         )
         if result['status'] not in ('ok', 'skip'):
-            run_alert_pipeline(file_rec, result)
+            _fim_raise_alert(file_rec, result)
         log_activity('tamper_simulation',
                      f'Replaced file content: "{file_rec.original_name}" — {result["status"]}')
         db.session.commit()
@@ -2665,15 +2844,13 @@ def edit_file_save(file_uuid):
     check_status  = 'skip'
     check_message = 'File saved. No baseline exists — click Capture Baseline to start monitoring.'
     try:
-        from integrity_engine import check_single_file, run_alert_pipeline
-        result = check_single_file(
-            file_id=file_rec.id,
+        result = _fim_check_file(file_rec,
             triggered_by='manual',
             triggered_by_user_id=current_user.id,
         )
         check_status = result['status']
         if check_status not in ('ok', 'skip'):
-            run_alert_pipeline(file_rec, result)
+            _fim_raise_alert(file_rec, result)
         check_message = {
             'ok':       'File saved. Content matches baseline (same content as baseline).',
             'tampered': '⚠ File saved. Hash mismatch — integrity alert raised.',
