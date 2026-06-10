@@ -222,6 +222,9 @@ class User(UserMixin, db.Model):
     default_policy_id      = db.Column(db.Integer,
                                        db.ForeignKey('monitoring_policies.id', ondelete='SET NULL'),
                                        nullable=True)
+    # Notification preferences
+    email_alerts_enabled   = db.Column(db.Boolean, nullable=False, default=True)
+    alert_email            = db.Column(db.String(120), nullable=True)  # if null, login email is used
 
     files          = db.relationship('File', backref='owner', lazy=True,
                                      foreign_keys='File.user_id',
@@ -832,6 +835,63 @@ def _apply_type_filter(q, type_filter):
 # ---------------------------------------------------------------------------
 # FIM helpers — defined here so db/models are always in scope (no circular import)
 # ---------------------------------------------------------------------------
+def _send_alert_email(file_rec, alert, severity, title):
+    """Send an email notification to the file owner when an integrity alert is raised."""
+    if not app.config.get('MAIL_USERNAME'):
+        return
+    owner = db.session.get(User, file_rec.user_id)
+    if not owner:
+        return
+    if not getattr(owner, 'email_alerts_enabled', True):
+        return
+    recipient = owner.alert_email or owner.email
+    severity_colour = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
+    try:
+        msg = Message(
+            subject=f'[FileVault] {severity.upper()} Alert — {file_rec.original_name}',
+            recipients=[recipient],
+        )
+        msg.body = (
+            f'FileVault Integrity Alert\n'
+            f'-------------------------\n'
+            f'Severity : {severity.upper()}\n'
+            f'File     : {file_rec.original_name}\n'
+            f'Alert    : {title}\n'
+            f'Detected : {alert.raised_at.strftime("%Y-%m-%d %H:%M:%S UTC")}\n\n'
+            f'Log in to FileVault to review and close this alert.\n\n'
+            f'To stop receiving these emails, go to Settings → Notifications in your profile.'
+        )
+        msg.html = f'''
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#f4f6f9;padding:24px;border-radius:10px">
+  <div style="background:#0d1117;padding:18px 24px;border-radius:8px 8px 0 0;text-align:center">
+    <span style="color:white;font-size:20px;font-weight:bold">&#128274; FileVault</span>
+  </div>
+  <div style="background:white;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e0e0e0">
+    <div style="background:{severity_colour};color:white;padding:10px 16px;border-radius:6px;font-weight:bold;margin-bottom:16px">
+      {severity.upper()} INTEGRITY ALERT
+    </div>
+    <h3 style="margin:0 0 16px">{title}</h3>
+    <table style="width:100%;font-size:14px;border-collapse:collapse">
+      <tr><td style="padding:6px 0;color:#555;width:90px">File</td><td><strong>{file_rec.original_name}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#555">Severity</td><td><strong style="color:{severity_colour}">{severity.upper()}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#555">Detected</td><td>{alert.raised_at.strftime("%Y-%m-%d %H:%M:%S UTC")}</td></tr>
+    </table>
+    <div style="margin-top:20px">
+      <a href="{url_for('fim_alerts', _external=True)}"
+         style="background:#0d6efd;color:white;padding:10px 22px;border-radius:6px;text-decoration:none;font-size:14px">
+        View Alert in FileVault
+      </a>
+    </div>
+    <p style="margin-top:24px;font-size:12px;color:#999;border-top:1px solid #eee;padding-top:12px">
+      To stop receiving these emails, go to <strong>Settings → Notifications</strong> in your FileVault profile.
+    </p>
+  </div>
+</div>'''
+        mail.send(msg)
+    except Exception as exc:
+        app.logger.error('Alert email failed to %s: %s', recipient, exc)
+
+
 def _fim_capture_baseline(file_rec, user, reason='upload'):
     """Hash the file and write an IntegrityBaseline row. Does NOT commit."""
     from integrity_engine import hash_file as _hash_file
@@ -984,6 +1044,8 @@ def _fim_raise_alert(file_rec, result):
         })
     except Exception as exc:
         app.logger.error('SocketIO emit failed: %s', exc)
+
+    _send_alert_email(file_rec, alert, severity, title)
 
 
 def _fim_accept_baseline(file_rec, user, note=''):
@@ -1367,6 +1429,14 @@ def profile():
                 log_activity('profile', 'Changed password')
                 db.session.commit()
                 flash('Password changed successfully.', 'success')
+
+        elif action == 'update_notifications':
+            current_user.email_alerts_enabled = request.form.get('email_alerts_enabled') == '1'
+            alert_email = request.form.get('alert_email', '').strip()
+            current_user.alert_email = alert_email if alert_email else None
+            log_activity('profile', 'Updated notification settings')
+            db.session.commit()
+            flash('Notification settings saved.', 'success')
 
         return redirect(url_for('profile'))
 

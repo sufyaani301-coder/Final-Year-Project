@@ -99,6 +99,8 @@ with app.app_context():
         # change_requests table is created by db.create_all(); columns patched for safety
         "ALTER TABLE change_requests ADD COLUMN pending_file VARCHAR(260)",
         "ALTER TABLE change_requests ADD COLUMN executed_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN email_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE users ADD COLUMN alert_email VARCHAR(120)",
     ]:
         try:
             db.session.execute(text(_stmt))
