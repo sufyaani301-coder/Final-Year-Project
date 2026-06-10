@@ -115,4 +115,25 @@ with app.app_context():
     except Exception:
         db.session.rollback()
 
+    # Final safety pass: create any model-defined tables that still don't exist
+    # (catches new models added after the last Alembic migration, e.g. change_requests)
+    print("=== prestart: final db.create_all() pass ===", flush=True)
+    try:
+        db.create_all()
+        print("=== prestart: all tables verified ===", flush=True)
+    except Exception as exc:
+        print(f"=== prestart: final create_all warning: {exc} ===", flush=True)
+
+    # Verify FIM tables exist explicitly
+    insp2 = inspect(db.engine)
+    all_tables = insp2.get_table_names()
+    fim_tables = ['monitoring_policies', 'integrity_baselines',
+                  'integrity_checks', 'integrity_alerts',
+                  'alert_comments', 'change_requests']
+    missing = [t for t in fim_tables if t not in all_tables]
+    if missing:
+        print(f"=== prestart WARNING: FIM tables still missing after create_all: {missing} ===", flush=True)
+    else:
+        print("=== prestart: all FIM tables present ===", flush=True)
+
     print("=== prestart complete ===", flush=True)

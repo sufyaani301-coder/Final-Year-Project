@@ -1881,14 +1881,20 @@ def fim_manual_check(file_uuid):
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         return jsonify(success=False, error='Forbidden'), 403
 
-    result = check_single_file(
-        file_id=file_rec.id,
-        triggered_by='manual',
-        triggered_by_user_id=current_user.id,
-    )
-    if result['status'] not in ('ok', 'skip'):
-        run_alert_pipeline(file_rec, result)
-    db.session.commit()
+    try:
+        db.create_all()
+        result = check_single_file(
+            file_id=file_rec.id,
+            triggered_by='manual',
+            triggered_by_user_id=current_user.id,
+        )
+        if result['status'] not in ('ok', 'skip'):
+            run_alert_pipeline(file_rec, result)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('fim_manual_check error: %s', exc)
+        return jsonify(success=False, error=f'Check failed: {exc}'), 500
 
     return jsonify(
         success=True,
@@ -1899,7 +1905,7 @@ def fim_manual_check(file_uuid):
             'tampered':'⚠ Hash mismatch detected! Alert raised.',
             'missing': '⚠ File is missing from disk! Alert raised.',
             'error':   'Check error — see alert details.',
-            'skip':    'Skipped (no baseline).',
+            'skip':    'No baseline yet — use Capture Baseline first.',
         }.get(result['status'], result['status']),
     )
 
@@ -1951,25 +1957,56 @@ def fim_simulate_tamper(file_uuid):
 # ---------------------------------------------------------------------------
 # FIM — Reset / accept baseline
 # ---------------------------------------------------------------------------
+@app.route('/fim/baseline/<file_uuid>/capture', methods=['POST'])
+@login_required
+def fim_capture_baseline(file_uuid):
+    """Capture an initial baseline for a PENDING file (no existing baseline required)."""
+    from integrity_engine import capture_baseline, hash_file
+    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if file_rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    if not os.path.exists(filepath):
+        return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
+    try:
+        db.create_all()  # ensure FIM tables exist
+        baseline = capture_baseline(file_rec, current_user, reason='manual_capture')
+        if baseline is None:
+            return jsonify(success=False, error='Hash computation failed — check server logs'), 500
+        log_activity('baseline_reset', f'Captured initial baseline for "{file_rec.original_name}"')
+        db.session.commit()
+        return jsonify(success=True,
+                       message=f'Baseline captured. SHA-256: {baseline.sha256_hash[:16]}…',
+                       hash=baseline.sha256_hash)
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('fim_capture_baseline error: %s', exc)
+        return jsonify(success=False, error=f'Database error: {exc}'), 500
+
+
 @app.route('/fim/baseline/<file_uuid>/reset', methods=['POST'])
 @login_required
 def fim_reset_baseline(file_uuid):
     from integrity_engine import accept_new_baseline
-
     if not current_user.is_admin:
         return jsonify(success=False, error='Admin required'), 403
-
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    note     = request.form.get('note', '').strip()
-
-    ok = accept_new_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
-    if not ok:
-        return jsonify(success=False, error='Failed to capture new baseline — file may be missing'), 500
-
-    db.session.commit()
-    log_activity('baseline_reset', f'Reset baseline for "{file_rec.original_name}"')
-    db.session.commit()
-    return jsonify(success=True, message='Baseline updated and open alerts resolved.')
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
+    if not os.path.exists(filepath):
+        return jsonify(success=False, error=f'File not found on disk: {file_rec.stored_name}'), 404
+    note = request.form.get('note', '').strip()
+    try:
+        db.create_all()
+        ok = accept_new_baseline(file_rec, current_user, note=note or 'Baseline reset by admin')
+        if not ok:
+            return jsonify(success=False, error='Hash computation failed — check server logs'), 500
+        log_activity('baseline_reset', f'Reset baseline for "{file_rec.original_name}"')
+        db.session.commit()
+        return jsonify(success=True, message='Baseline updated and all open alerts resolved.')
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error('fim_reset_baseline error: %s', exc)
+        return jsonify(success=False, error=f'Database error: {exc}'), 500
 
 
 # ---------------------------------------------------------------------------

@@ -107,11 +107,19 @@
             <td class="text-muted small">{{ f.policy.name if f.policy else '—' }}</td>
             <td>
               <div class="d-flex gap-1 flex-wrap">
+                {% if f.current_status == 'pending' %}
+                <!-- Capture initial baseline (no baseline exists yet) -->
+                <button class="btn btn-sm btn-outline-success" title="Capture baseline (first-time setup)"
+                        onclick="captureBaseline('{{ f.uuid }}', this)">
+                  <i class="bi bi-database-add"></i>
+                </button>
+                {% else %}
                 <!-- Manual check -->
                 <button class="btn btn-sm btn-outline-info" title="Run integrity check"
                         onclick="runCheck('{{ f.uuid }}', this)">
                   <i class="bi bi-shield-check"></i>
                 </button>
+                {% endif %}
                 <!-- View details -->
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
                    class="btn btn-sm btn-outline-secondary" title="View details">
@@ -312,11 +320,12 @@
       </div>
       <div class="modal-body">
         <p class="small text-muted mb-2">Upload a <strong>new version</strong> of <span id="replaceFileName" class="fw-semibold text-body"></span>. The original baseline hash is kept — the system will immediately detect the hash mismatch and raise a <strong class="text-danger">Critical</strong> alert.</p>
-        <div class="border rounded-2 p-3 text-center" id="replaceDZ" style="cursor:pointer" onclick="document.getElementById('replaceInput').click()">
+        <button type="button" class="btn w-100 border rounded-2 p-3 text-center" id="replaceDZ"
+                onclick="document.getElementById('replaceInput').click()">
           <i class="bi bi-upload fs-3 text-primary"></i>
           <p class="small mb-0 mt-1 text-muted">Click to choose replacement file</p>
           <div id="replaceChosen" class="small text-primary fw-semibold mt-1"></div>
-        </div>
+        </button>
         <input type="file" id="replaceInput" class="d-none"/>
       </div>
       <div class="modal-footer">
@@ -446,6 +455,24 @@ async function startUpload() {
   xhr.send(form);
 }
 
+// ── Capture initial baseline (PENDING files) ──
+async function captureBaseline(fileUuid, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  let d;
+  try {
+    const r = await fetch(`/fim/baseline/${fileUuid}/capture`, { method:'POST', body:form });
+    d = await r.json();
+  } catch(e) { btn.disabled=false; btn.innerHTML=orig; showToast('Server error — check Railway logs.','danger'); return; }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+  if (d.success) { showToast(d.message, 'success'); setTimeout(()=>location.reload(), 1200); }
+  else showToast(d.error || 'Capture failed.', 'danger');
+}
+
 // ── Manual integrity check ──
 async function runCheck(fileUuid, btn) {
   const orig = btn.innerHTML;
@@ -453,12 +480,15 @@ async function runCheck(fileUuid, btn) {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
   const form = new FormData();
   form.append('csrf_token', CSRF);
-  const r = await fetch(`/fim/check/${fileUuid}`, { method:'POST', body:form });
-  const d = await r.json();
+  let d;
+  try {
+    const r = await fetch(`/fim/check/${fileUuid}`, { method:'POST', body:form });
+    d = await r.json();
+  } catch(e) { btn.disabled=false; btn.innerHTML=orig; showToast('Server error — check Railway logs.','danger'); return; }
   btn.disabled = false;
   btn.innerHTML = orig;
   if (d.success) {
-    const statusMap = { ok:'success', tampered:'danger', missing:'warning', error:'warning', skip:'info' };
+    const statusMap = { ok:'success', tampered:'danger', missing:'warning', error:'warning', skip:'warning' };
     showToast(d.message || d.status, statusMap[d.status] || 'info');
     if (d.status !== 'ok') setTimeout(()=>location.reload(), 1500);
   } else showToast(d.error || 'Check failed.', 'danger');
@@ -477,8 +507,14 @@ document.getElementById('resetBaselineConfirm')?.addEventListener('click', async
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('note', document.getElementById('resetNote').value.trim());
-  const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
-  const d = await r.json();
+  let d;
+  try {
+    const r = await fetch(`/fim/baseline/${_resetUuid}/reset`, { method:'POST', body:form });
+    d = await r.json();
+  } catch(e) {
+    bootstrap.Modal.getInstance(document.getElementById('resetBaselineModal')).hide();
+    showToast('Server error — check Railway logs.', 'danger'); return;
+  }
   bootstrap.Modal.getInstance(document.getElementById('resetBaselineModal')).hide();
   if (d.success) { showToast(d.message, 'success'); setTimeout(()=>location.reload(), 1200); }
   else showToast(d.error || 'Reset failed.', 'danger');
