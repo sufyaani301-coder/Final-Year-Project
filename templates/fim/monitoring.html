@@ -151,47 +151,44 @@
                         onclick="openRename('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-pencil"></i>
                 </button>
-                {% if current_user.is_admin %}
-                <!-- Admin: direct replace -->
+                <!-- Replace: owner or admin can always replace directly -->
+                {% if current_user.is_admin or f.user_id == current_user.id %}
                 <button class="btn btn-sm btn-outline-primary" title="Replace file content"
                         onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-file-earmark-arrow-up"></i>
                 </button>
                 {% elif f.monitoring_enabled %}
-                <!-- Non-admin + monitored: must request authorization -->
+                <!-- Shared access + monitored: must request authorization -->
                 <button class="btn btn-sm btn-outline-primary" title="Request authorized replacement"
                         onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'replace')">
                   <i class="bi bi-send-check"></i>
                 </button>
-                {% else %}
-                <!-- Non-admin + not monitored: direct replace OK -->
-                <button class="btn btn-sm btn-outline-primary" title="Replace file content"
-                        onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                  <i class="bi bi-file-earmark-arrow-up"></i>
+                {% endif %}
+                <!-- Share (owner only) -->
+                {% if f.user_id == current_user.id %}
+                <button class="btn btn-sm btn-outline-success" title="Share file"
+                        onclick="openShare('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                  <i class="bi bi-share"></i>
                 </button>
                 {% endif %}
                 {% if current_user.is_admin %}
-                <!-- Reset baseline -->
+                <!-- Reset baseline (admin only) -->
                 <button class="btn btn-sm btn-outline-info" title="Reset baseline"
                         onclick="resetBaseline('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
                   <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
-                <!-- Admin: direct delete -->
+                {% endif %}
+                <!-- Delete: owner or admin can always delete directly -->
+                {% if current_user.is_admin or f.user_id == current_user.id %}
                 <button class="btn btn-sm btn-outline-danger" title="Delete file"
                         onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
                   <i class="bi bi-trash"></i>
                 </button>
                 {% elif f.monitoring_enabled %}
-                <!-- Non-admin + monitored: must request authorization to delete -->
+                <!-- Shared access + monitored: request authorization -->
                 <button class="btn btn-sm btn-outline-danger" title="Request authorized deletion"
                         onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'delete')">
                   <i class="bi bi-send-check"></i>
-                </button>
-                {% else %}
-                <!-- Non-admin + not monitored: direct delete OK -->
-                <button class="btn btn-sm btn-outline-danger" title="Delete file"
-                        onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
-                  <i class="bi bi-trash"></i>
                 </button>
                 {% endif %}
                 {% endif %}
@@ -387,6 +384,66 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-sm btn-warning" id="resetBaselineConfirm">Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Share modal -->
+<div class="modal fade" id="shareModal" tabindex="-1" aria-labelledby="shareModalLabel">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="shareModalLabel">
+          <i class="bi bi-share me-2 text-success"></i>Share File
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3">Sharing: <strong id="shareModalFileName"></strong></p>
+
+        <label class="form-label small fw-semibold mb-1">Share with a user</label>
+        <div class="input-group input-group-sm mb-1">
+          <input type="email" id="shareEmailInput" class="form-control"
+                 placeholder="Enter email address of another FileVault user" autocomplete="off"/>
+          <button class="btn btn-success" id="shareAddBtn">
+            <i class="bi bi-person-plus me-1"></i>Share
+          </button>
+        </div>
+        <div id="shareAddError" class="text-danger small mb-2" style="display:none"></div>
+        <div id="shareAddSuccess" class="text-success small mb-2" style="display:none"></div>
+
+        <div id="shareCurrentWrap" class="mb-3">
+          <p class="small text-muted mb-1 fw-semibold">Shared with:</p>
+          <div id="shareCurrentList" class="d-flex flex-column gap-1"></div>
+        </div>
+
+        <hr class="my-3"/>
+
+        <label class="form-label small fw-semibold mb-1">Public download link</label>
+        <div class="d-flex gap-2 mb-2">
+          <select id="shareLinkExpiry" class="form-select form-select-sm flex-grow-0" style="width:auto">
+            <option value="">Never expires</option>
+            <option value="1">1 day</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary" id="shareLinkBtn">
+            <i class="bi bi-link-45deg me-1"></i>Generate link
+          </button>
+        </div>
+        <div id="shareLinkResult" style="display:none">
+          <div class="input-group input-group-sm">
+            <input type="text" id="shareLinkUrl" class="form-control font-monospace small" readonly/>
+            <button class="btn btn-outline-secondary" id="shareLinkCopy" title="Copy link">
+              <i class="bi bi-clipboard"></i>
+            </button>
+          </div>
+          <p class="text-muted small mt-1" id="shareLinkExpText"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>
@@ -692,6 +749,88 @@ document.getElementById('authRequestConfirm')?.addEventListener('click', async (
   } else {
     showToast(d.error || 'Request failed.', 'danger');
   }
+});
+
+// ── Share ──
+let _shareUuid = null;
+function openShare(fileUuid, fileName) {
+  _shareUuid = fileUuid;
+  document.getElementById('shareModalFileName').textContent = fileName;
+  document.getElementById('shareEmailInput').value = '';
+  document.getElementById('shareAddError').style.display = 'none';
+  document.getElementById('shareAddSuccess').style.display = 'none';
+  document.getElementById('shareLinkResult').style.display = 'none';
+  loadShareList(fileUuid);
+  new bootstrap.Modal(document.getElementById('shareModal')).show();
+}
+async function loadShareList(fileUuid) {
+  const wrap = document.getElementById('shareCurrentWrap');
+  const list = document.getElementById('shareCurrentList');
+  try {
+    const r = await fetch(`/api/file/${fileUuid}/shares`);
+    const d = await r.json();
+    if (!d.success) { list.innerHTML = '<span class="text-muted small">Could not load.</span>'; return; }
+    if (d.shares.length === 0) {
+      wrap.style.display = 'none'; return;
+    }
+    wrap.style.display = '';
+    list.innerHTML = d.shares.map(s =>
+      `<div class="d-flex align-items-center justify-content-between bg-body-secondary rounded px-2 py-1 small">
+         <span><i class="bi bi-person-circle me-1 text-muted"></i>${s.name} <span class="text-muted">(${s.email})</span></span>
+         <button class="btn btn-xs btn-outline-danger border-0 py-0 px-1" title="Remove access"
+                 onclick="removeShare('${fileUuid}', ${s.user_id}, this)">
+           <i class="bi bi-x-lg"></i>
+         </button>
+       </div>`
+    ).join('');
+  } catch(e) {
+    list.innerHTML = '<span class="text-muted small">Could not load.</span>';
+  }
+}
+async function removeShare(fileUuid, userId, btn) {
+  btn.disabled = true;
+  const form = new FormData(); form.append('csrf_token', CSRF);
+  const r = await fetch(`/api/unshare/${fileUuid}/${userId}`, { method: 'POST', body: form });
+  const d = await r.json();
+  if (d.success) { loadShareList(fileUuid); showToast('Access removed.', 'info'); }
+  else { btn.disabled = false; showToast(d.error || 'Failed to remove.', 'danger'); }
+}
+document.getElementById('shareAddBtn')?.addEventListener('click', async () => {
+  const email   = document.getElementById('shareEmailInput').value.trim();
+  const errEl   = document.getElementById('shareAddError');
+  const okEl    = document.getElementById('shareAddSuccess');
+  errEl.style.display = 'none'; okEl.style.display = 'none';
+  if (!email) { errEl.textContent = 'Enter an email address.'; errEl.style.display = ''; return; }
+  const form = new FormData(); form.append('csrf_token', CSRF); form.append('email', email);
+  const r = await fetch(`/api/share/${_shareUuid}`, { method: 'POST', body: form });
+  const d = await r.json();
+  if (d.success) {
+    okEl.textContent = d.message; okEl.style.display = '';
+    document.getElementById('shareEmailInput').value = '';
+    loadShareList(_shareUuid);
+  } else {
+    errEl.textContent = d.error || 'Share failed.'; errEl.style.display = '';
+  }
+});
+document.getElementById('shareEmailInput')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('shareAddBtn').click();
+});
+document.getElementById('shareLinkBtn')?.addEventListener('click', async () => {
+  const days = document.getElementById('shareLinkExpiry').value;
+  const form = new FormData(); form.append('csrf_token', CSRF);
+  if (days) form.append('expires_days', days);
+  const r = await fetch(`/share-link/create/${_shareUuid}`, { method: 'POST', body: form });
+  const d = await r.json();
+  if (d.success) {
+    document.getElementById('shareLinkUrl').value = d.link;
+    document.getElementById('shareLinkExpText').textContent = days ? `Expires in ${days} day(s).` : 'This link never expires.';
+    document.getElementById('shareLinkResult').style.display = '';
+  } else { showToast(d.error || 'Failed to generate link.', 'danger'); }
+});
+document.getElementById('shareLinkCopy')?.addEventListener('click', () => {
+  const url = document.getElementById('shareLinkUrl').value;
+  navigator.clipboard?.writeText(url).then(() => showToast('Link copied!', 'success'))
+    .catch(() => { document.getElementById('shareLinkUrl').select(); document.execCommand('copy'); showToast('Link copied!', 'success'); });
 });
 
 // ── Decrypt & Download ──

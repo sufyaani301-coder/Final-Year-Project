@@ -1770,6 +1770,62 @@ def delete_share_link(token_str):
     return jsonify(success=True)
 
 
+# ---------------------------------------------------------------------------
+# Sharing API — AJAX endpoints used by the Share modal
+# ---------------------------------------------------------------------------
+@app.route('/api/share/<file_uuid>', methods=['POST'])
+@login_required
+def api_share_file(file_uuid):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if rec.user_id != current_user.id:
+        return jsonify(success=False, error='Only the file owner can share it.'), 403
+    email = (request.json or {}).get('email', '').strip().lower() if request.is_json \
+            else request.form.get('email', '').strip().lower()
+    if not email:
+        return jsonify(success=False, error='Enter an email address.'), 400
+    target = User.query.filter(db.func.lower(User.email) == email).first()
+    if not target:
+        return jsonify(success=False, error='No account found with that email.'), 404
+    if target.id == current_user.id:
+        return jsonify(success=False, error="You can't share a file with yourself."), 400
+    if FileShare.query.filter_by(file_id=rec.id, shared_with_id=target.id).first():
+        return jsonify(success=False, error=f'Already shared with {target.full_name}.'), 409
+    db.session.add(FileShare(file_id=rec.id, shared_with_id=target.id, shared_by_id=current_user.id))
+    log_activity('share', f'Shared "{rec.original_name}" with {target.full_name}')
+    db.session.commit()
+    return jsonify(success=True, message=f'Shared with {target.full_name}.', user={
+        'id': target.id, 'name': target.full_name, 'email': target.email,
+    })
+
+
+@app.route('/api/unshare/<file_uuid>/<int:user_id>', methods=['POST'])
+@login_required
+def api_unshare_file(file_uuid, user_id):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    share = FileShare.query.filter_by(file_id=rec.id, shared_with_id=user_id).first()
+    if not share:
+        return jsonify(success=False, error='Share not found.'), 404
+    target_name = share.shared_with.full_name
+    db.session.delete(share)
+    log_activity('share', f'Removed "{rec.original_name}" access for {target_name}')
+    db.session.commit()
+    return jsonify(success=True)
+
+
+@app.route('/api/file/<file_uuid>/shares')
+@login_required
+def api_file_shares(file_uuid):
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if rec.user_id != current_user.id and not current_user.is_admin:
+        return jsonify(success=False, error='Forbidden'), 403
+    return jsonify(success=True, shares=[
+        {'user_id': s.shared_with_id, 'name': s.shared_with.full_name, 'email': s.shared_with.email}
+        for s in rec.shares
+    ])
+
+
 @app.route('/s/<token_str>')
 def public_shared_file(token_str):
     tok = ShareToken.query.filter_by(token=token_str).first_or_404()
