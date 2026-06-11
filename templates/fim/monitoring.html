@@ -11,14 +11,17 @@
     <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
       <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
       <span class="fw-semibold flex-grow-1">Monitored Files</span>
-      {% if current_user.role not in ('analyst', 'auditor') %}
+      {% if current_user.is_admin %}
       <button class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0"
               data-bs-toggle="modal" data-bs-target="#uploadModal">
         <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload</span>
       </button>
       {% else %}
-      <span class="badge bg-secondary align-self-center">
-        {{ current_user.role | capitalize }} — read-only
+      {% set cl = current_user.clearance_level %}
+      <span class="badge align-self-center px-2 py-1"
+        style="font-size:.68rem;background:{% if cl==1 %}#7c0000{% elif cl==2 %}#b54a00
+          {% elif cl==3 %}#856404{% elif cl==4 %}#084298{% else %}#155724{% endif %}">
+        L{{ cl }} {{ current_user.clearance_label }}
       </span>
       {% endif %}
       <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
@@ -93,10 +96,19 @@
               <div class="d-flex align-items-center gap-2">
                 <i class="bi {{ f.icon }} flex-shrink-0"></i>
                 <div class="overflow-hidden">
-                  <div class="fw-semibold text-truncate" style="max-width:220px" title="{{ f.original_name }}">
+                  <div class="fw-semibold text-truncate" style="max-width:200px" title="{{ f.original_name }}">
                     <a href="{{ url_for('fim_file_status', file_id=f.id) }}" class="text-decoration-none">{{ f.original_name }}</a>
                   </div>
-                  <div class="text-muted small">{{ f.size_human }} · {{ f.uploaded_at.strftime('%b %d, %Y') }}</div>
+                  <div class="d-flex align-items-center gap-1 mt-1">
+                    <span class="badge px-1 py-0"
+                      style="font-size:.58rem;font-weight:700;
+                        background:{% if f.classification==1 %}#7c0000{% elif f.classification==2 %}#b54a00
+                        {% elif f.classification==3 %}#856404{% elif f.classification==4 %}#084298
+                        {% else %}#155724{% endif %}">
+                      L{{ f.classification }} {{ f.classification_label }}
+                    </span>
+                    <span class="text-muted small">{{ f.size_human }} · {{ f.uploaded_at.strftime('%b %d, %Y') }}</span>
+                  </div>
                 </div>
               </div>
             </td>
@@ -114,15 +126,30 @@
             <td>
               <div class="d-flex gap-1 flex-wrap">
 
-                {# ── Auditor: view-only, no checks or downloads ─────────── #}
-                {% if current_user.role == 'auditor' %}
+              {% if not current_user.is_admin %}
+                {# ── Non-admin: view + integrity checks + request approval for actions ── #}
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
-                   class="btn btn-sm btn-outline-secondary" title="View integrity details">
+                   class="btn btn-sm btn-outline-secondary" title="View details">
                   <i class="bi bi-eye"></i>
                 </a>
+                {% if f.current_status == 'pending' %}
+                <button class="btn btn-sm btn-outline-success" title="Capture baseline"
+                        onclick="captureBaseline('{{ f.uuid }}', this)">
+                  <i class="bi bi-database-add"></i>
+                </button>
+                {% else %}
+                <button class="btn btn-sm btn-outline-info" title="Run integrity check"
+                        onclick="runCheck('{{ f.uuid }}', this)">
+                  <i class="bi bi-shield-check"></i>
+                </button>
+                {% endif %}
+                <button class="btn btn-sm btn-outline-primary" title="Request download"
+                        onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','download')">
+                  <i class="bi bi-send"></i>
+                </button>
 
-                {# ── Analyst: investigate shared files, no writes ─────────── #}
-                {% elif current_user.role == 'analyst' %}
+              {% else %}
+                {# ── Admin: full direct controls ── #}
                 {% if f.current_status == 'pending' %}
                 <button class="btn btn-sm btn-outline-success" title="Capture baseline"
                         onclick="captureBaseline('{{ f.uuid }}', this)">
@@ -149,43 +176,13 @@
                   <i class="bi bi-download"></i>
                 </a>
                 {% endif %}
-
-                {# ── Owner / Admin: full controls ─────────── #}
-                {% else %}
-                {% if f.current_status == 'pending' %}
-                <button class="btn btn-sm btn-outline-success" title="Capture baseline (first-time setup)"
-                        onclick="captureBaseline('{{ f.uuid }}', this)">
-                  <i class="bi bi-database-add"></i>
-                </button>
-                {% else %}
-                <button class="btn btn-sm btn-outline-info" title="Run integrity check"
-                        onclick="runCheck('{{ f.uuid }}', this)">
-                  <i class="bi bi-shield-check"></i>
-                </button>
-                {% endif %}
-                <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
-                   class="btn btn-sm btn-outline-secondary" title="View details">
-                  <i class="bi bi-eye"></i>
-                </a>
-                {% if f.is_encrypted %}
-                <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
-                        onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                  <i class="bi bi-unlock"></i>
-                </button>
-                {% else %}
-                <a href="{{ url_for('download_file', file_uuid=f.uuid) }}"
-                   class="btn btn-sm btn-outline-secondary" title="Download">
-                  <i class="bi bi-download"></i>
-                </a>
-                {% endif %}
                 {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
-                {% if _fext in ('txt','csv','json','xml') and (f.user_id == current_user.id or current_user.is_admin) %}
+                {% if _fext in ('txt','csv','json','xml') %}
                 <a href="{{ url_for('edit_file_page', file_uuid=f.uuid) }}"
                    class="btn btn-sm btn-outline-info" title="Edit in browser">
                   <i class="bi bi-pencil-square"></i>
                 </a>
                 {% endif %}
-                {% if f.user_id == current_user.id or current_user.is_admin %}
                 <button class="btn btn-sm btn-outline-secondary" title="Rename file"
                         onclick="openRename('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-pencil"></i>
@@ -194,24 +191,19 @@
                         onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-file-earmark-arrow-up"></i>
                 </button>
-                {% if f.user_id == current_user.id %}
-                <button class="btn btn-sm btn-outline-success" title="Share file"
+                <button class="btn btn-sm btn-outline-success" title="Grant access to user"
                         onclick="openShare('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                  <i class="bi bi-share"></i>
+                  <i class="bi bi-person-plus"></i>
                 </button>
-                {% endif %}
-                {% if current_user.is_admin %}
                 <button class="btn btn-sm btn-outline-info" title="Reset baseline"
                         onclick="resetBaseline('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
                   <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
-                {% endif %}
                 <button class="btn btn-sm btn-outline-danger" title="Delete file"
                         onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
                   <i class="bi bi-trash"></i>
                 </button>
-                {% endif %}
-                {% endif %}
+              {% endif %}
 
               </div>
             </td>
@@ -287,6 +279,17 @@
           <div class="progress" style="height:8px">
             <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
           </div>
+        </div>
+        <div class="mt-3">
+          <label class="form-label fw-semibold small" for="classificationSelect">File Classification <span class="text-danger">*</span></label>
+          <select class="form-select form-select-sm" id="classificationSelect" name="classification">
+            <option value="5" selected>5 — UNCLASSIFIED (all users with clearance 5+)</option>
+            <option value="4">4 — RESTRICTED (clearance 4 or higher)</option>
+            <option value="3">3 — CONFIDENTIAL (clearance 3 or higher)</option>
+            <option value="2">2 — SECRET (clearance 2 or higher)</option>
+            <option value="1">1 — TOP SECRET (clearance 1 only)</option>
+          </select>
+          <div class="form-text">Users must have a clearance level ≤ the file's classification to view it.</div>
         </div>
         <div class="mt-2"><small class="text-muted">Allowed: images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small></div>
       </div>
@@ -423,7 +426,7 @@
       <div class="modal-body">
         <p class="small text-muted mb-3">Sharing: <strong id="shareModalFileName"></strong></p>
 
-        <label class="form-label small fw-semibold mb-1">Share with a user</label>
+        <label class="form-label small fw-semibold mb-1" for="shareEmailInput">Grant access to a user</label>
         <div class="input-group input-group-sm mb-1">
           <input type="email" id="shareEmailInput" class="form-control"
                  placeholder="Enter email address of another FileVault user" autocomplete="off"/>
@@ -441,7 +444,7 @@
 
         <hr class="my-3"/>
 
-        <label class="form-label small fw-semibold mb-1">Public download link</label>
+        <label class="form-label small fw-semibold mb-1" for="shareLinkExpiry">Public download link</label>
         <div class="d-flex gap-2 mb-2">
           <select id="shareLinkExpiry" class="form-select form-select-sm flex-grow-0" style="width:auto">
             <option value="">Never expires</option>
@@ -465,6 +468,72 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Request Action modal (non-admin users) -->
+<div class="modal fade" id="requestModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">
+          <i class="bi bi-send me-2 text-primary"></i>Request Action Approval
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info d-flex gap-2 align-items-start py-2 px-3" style="font-size:.85rem">
+          <i class="bi bi-info-circle-fill flex-shrink-0 mt-1"></i>
+          <span>Your request will be sent to the administrator for review.
+            You will be notified when approved. A 30-minute execution window will open,
+            during which you must confirm with your account password.</span>
+        </div>
+        <p class="small mb-1">
+          Requesting: <strong id="req-action-label" class="text-primary"></strong> on
+          <em id="req-file-name" class="fw-semibold"></em>
+        </p>
+        <div class="mb-3">
+          <label class="form-label fw-semibold small" for="reqJustification">
+            Justification <span class="text-danger">*</span>
+          </label>
+          <textarea class="form-control form-control-sm" id="reqJustification" rows="3"
+                    placeholder="Explain why you need to perform this action…"></textarea>
+        </div>
+        <div id="req-error" class="text-danger small" style="display:none"></div>
+        <div id="req-success" class="text-success small" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="reqSubmitBtn">
+          <i class="bi bi-send me-1"></i>Submit Request
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Execute Approved Action modal (user confirms with password after approval) -->
+<div class="modal fade" id="executeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h6 class="modal-title"><i class="bi bi-shield-lock me-2 text-success"></i>Confirm Execution</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted">Your request was approved. Enter your account password to execute
+          <strong id="exec-action-label"></strong>.</p>
+        <input type="password" id="execPassword" class="form-control form-control-sm mb-1"
+               placeholder="Your login password" autocomplete="current-password"/>
+        <div id="exec-error" class="text-danger small" style="display:none"></div>
+      </div>
+      <div class="modal-footer border-0">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-success" id="execConfirmBtn">
+          <i class="bi bi-check-lg me-1"></i>Execute
+        </button>
       </div>
     </div>
   </div>
@@ -527,6 +596,7 @@ async function startUpload() {
   const form = new FormData();
   form.append('file', file);
   form.append('csrf_token', CSRF);
+  form.append('classification', document.getElementById('classificationSelect').value);
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '{{ url_for("upload_file") }}');
   xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
@@ -912,11 +982,50 @@ if (typeof io !== 'undefined') {
     showToast(`${icon} Request #${data.request_id} ${data.status} by ${data.reviewer}.${data.note ? ' Note: ' + data.note : ''}`, color);
     if (data.status === 'approved') setTimeout(() => location.reload(), 2000);
   });
-  _sock.on('change_request', data => {
-    {% if current_user.is_admin %}
-    showToast(`New change request: ${data.requester} wants to ${data.action} "${data.filename}".`, 'warning');
-    {% endif %}
+  // Receive approval/rejection from admin
+  _sock.on('action_request_update', data => {
+    if (data.user_id != {{ current_user.id }}) return;
+    if (data.status === 'approved') {
+      // Store token for execution
+      sessionStorage.setItem('ar_token_' + data.request_id, data.token);
+      showToast(`✅ Request #${data.request_id} approved by admin. You have 30 min to execute. Reason: ${data.reason}`, 'success');
+    } else if (data.status === 'rejected') {
+      showToast(`❌ Request #${data.request_id} rejected. Reason: ${data.reason}`, 'danger');
+    }
   });
 }
+
+// ── Request Action (non-admin) ──────────────────────────────────────────────
+let _reqUuid = '', _reqAction = '';
+
+function openRequest(uuid, name, action) {
+  _reqUuid = uuid; _reqAction = action;
+  document.getElementById('req-action-label').textContent = action.charAt(0).toUpperCase() + action.slice(1);
+  document.getElementById('req-file-name').textContent = name;
+  document.getElementById('reqJustification').value = '';
+  document.getElementById('req-error').style.display = 'none';
+  document.getElementById('req-success').style.display = 'none';
+  new bootstrap.Modal('#requestModal').show();
+}
+
+document.getElementById('reqSubmitBtn')?.addEventListener('click', async () => {
+  const just = document.getElementById('reqJustification').value.trim();
+  if (!just) { document.getElementById('req-error').textContent = 'Justification is required.'; document.getElementById('req-error').style.display=''; return; }
+  const fd = new FormData();
+  fd.append('action_type', _reqAction);
+  fd.append('justification', just);
+  fd.append('csrf_token', CSRF);
+  const res  = await fetch(`/request-action/${_reqUuid}`, {method:'POST', body:fd, headers:{'X-Requested-With':'XMLHttpRequest'}});
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById('req-success').textContent = data.message;
+    document.getElementById('req-success').style.display = '';
+    document.getElementById('req-error').style.display = 'none';
+    setTimeout(() => bootstrap.Modal.getInstance(document.getElementById('requestModal'))?.hide(), 2000);
+  } else {
+    document.getElementById('req-error').textContent = data.error || 'Error submitting request.';
+    document.getElementById('req-error').style.display = '';
+  }
+});
 </script>
 {% endblock %}

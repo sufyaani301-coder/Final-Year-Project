@@ -79,6 +79,8 @@ class User(UserMixin, db.Model):
                                        nullable=True)
     email_alerts_enabled   = db.Column(db.Boolean, nullable=False, default=True)
     alert_email            = db.Column(db.String(120), nullable=True)
+    # Clearance level: 1=TOP SECRET (access all), 5=UNCLASSIFIED (access level-5 only)
+    clearance_level        = db.Column(db.Integer, nullable=False, default=5)
 
     files          = db.relationship('File', backref='owner', lazy=True,
                                      foreign_keys='File.user_id',
@@ -107,6 +109,17 @@ class User(UserMixin, db.Model):
     def role_label(self):
         return {'super_admin': 'Super Admin', 'analyst': 'Analyst',
                 'auditor': 'Auditor', 'user': 'User'}.get(self.role, 'User')
+
+    @property
+    def clearance_label(self):
+        return {1: 'TOP SECRET', 2: 'SECRET', 3: 'CONFIDENTIAL',
+                4: 'RESTRICTED', 5: 'UNCLASSIFIED'}.get(self.clearance_level, 'UNCLASSIFIED')
+
+    def can_view_file(self, file):
+        """True if this user's clearance level permits viewing the file."""
+        if self.is_admin:
+            return True
+        return (self.clearance_level or 5) <= (file.classification or 5)
 
     @property
     def initials(self):
@@ -141,6 +154,8 @@ class File(db.Model):
     next_check_at      = db.Column(db.DateTime, nullable=True)
     check_count        = db.Column(db.Integer, nullable=False, default=0)
     alert_count        = db.Column(db.Integer, nullable=False, default=0)
+    # Classification: 1=TOP SECRET, 2=SECRET, 3=CONFIDENTIAL, 4=RESTRICTED, 5=UNCLASSIFIED
+    classification     = db.Column(db.Integer, nullable=False, default=5)
 
     shares    = db.relationship('FileShare', backref='file', lazy=True,
                                foreign_keys='FileShare.file_id',
@@ -220,6 +235,16 @@ class File(db.Model):
     @property
     def is_image(self):
         return self.mimetype.startswith('image/')
+
+    @property
+    def classification_label(self):
+        return {1: 'TOP SECRET', 2: 'SECRET', 3: 'CONFIDENTIAL',
+                4: 'RESTRICTED', 5: 'UNCLASSIFIED'}.get(self.classification, 'UNCLASSIFIED')
+
+    @property
+    def classification_css(self):
+        return {1: 'class-ts', 2: 'class-secret', 3: 'class-conf',
+                4: 'class-restricted', 5: 'class-unclass'}.get(self.classification, 'class-unclass')
 
     def to_dict(self):
         return {
@@ -500,3 +525,102 @@ class ChangeRequest(db.Model):
             return _json.loads(self.action_data) if self.action_data else {}
         except Exception:
             return {}
+
+
+# ---------------------------------------------------------------------------
+# File Access Log — every interaction with a file
+# ---------------------------------------------------------------------------
+
+class FileAccessLog(db.Model):
+    """Immutable audit record for every file event: view, upload, download,
+    edit, rename, delete, share, copy. Feeds the real-time event monitor."""
+    __tablename__ = 'file_access_logs'
+    id          = db.Column(db.Integer, primary_key=True)
+    file_id     = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='SET NULL'), nullable=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    action      = db.Column(db.String(30),  nullable=False)   # upload/view/download/edit/rename/delete/share/copy
+    outcome     = db.Column(db.String(20),  nullable=False, default='success')  # success/denied/requested/approved/rejected/executed
+    ip_address  = db.Column(db.String(45),  nullable=True)
+    file_name   = db.Column(db.String(260), nullable=True)    # snapshot — file may be deleted later
+    user_name   = db.Column(db.String(120), nullable=True)    # snapshot
+    details     = db.Column(db.Text, nullable=True)
+    timestamp   = db.Column(db.DateTime, nullable=False,
+                            default=lambda: datetime.now(timezone.utc))
+
+    file = db.relationship('File', foreign_keys=[file_id])
+    user = db.relationship('User', foreign_keys=[user_id])
+
+    @property
+    def action_icon(self):
+        return {
+            'upload':   'bi-cloud-upload text-success',
+            'view':     'bi-eye text-info',
+            'download': 'bi-download text-primary',
+            'edit':     'bi-pencil text-warning',
+            'rename':   'bi-cursor-text text-warning',
+            'delete':   'bi-trash text-danger',
+            'share':    'bi-share text-success',
+            'copy':     'bi-files text-secondary',
+            'access_denied': 'bi-shield-x text-danger',
+        }.get(self.action, 'bi-activity text-muted')
+
+    @property
+    def outcome_badge(self):
+        return {
+            'success':  '<span class="badge bg-success">SUCCESS</span>',
+            'denied':   '<span class="badge bg-danger">DENIED</span>',
+            'requested':'<span class="badge bg-warning text-dark">REQUESTED</span>',
+            'approved': '<span class="badge bg-primary">APPROVED</span>',
+            'rejected': '<span class="badge bg-danger">REJECTED</span>',
+            'executed': '<span class="badge bg-success">EXECUTED</span>',
+        }.get(self.outcome, '<span class="badge bg-secondary">UNKNOWN</span>')
+
+
+# ---------------------------------------------------------------------------
+# Action Request — user requests download/edit/rename/delete; admin approves
+# ---------------------------------------------------------------------------
+
+class ActionRequest(db.Model):
+    """FBI-style authorisation: user submits request → admin approves/rejects
+    with reason → user confirms with account password → action executes."""
+    __tablename__ = 'action_requests'
+    id              = db.Column(db.Integer, primary_key=True)
+    file_id         = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    reviewed_by_id  = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    action_type     = db.Column(db.String(20), nullable=False)   # download / edit / rename / delete
+    justification   = db.Column(db.Text, nullable=True)
+    status          = db.Column(db.String(20), nullable=False, default='pending')
+    # pending → approved/rejected; approved → executed/expired
+    admin_reason    = db.Column(db.Text, nullable=True)          # admin's approval/rejection note
+    exec_token      = db.Column(db.String(64), nullable=True, unique=True)  # one-time token for execution
+    requested_at    = db.Column(db.DateTime, nullable=False,
+                                default=lambda: datetime.now(timezone.utc))
+    reviewed_at     = db.Column(db.DateTime, nullable=True)
+    expires_at      = db.Column(db.DateTime, nullable=True)      # 30 min after approval
+    executed_at     = db.Column(db.DateTime, nullable=True)
+
+    file         = db.relationship('File', foreign_keys=[file_id])
+    requested_by = db.relationship('User', foreign_keys=[requested_by_id])
+    reviewed_by  = db.relationship('User', foreign_keys=[reviewed_by_id])
+
+    @property
+    def is_expired(self):
+        if self.status != 'approved':
+            return False
+        return self.expires_at and datetime.now(timezone.utc) > self.expires_at
+
+    @property
+    def action_label(self):
+        return {'download': 'Download', 'edit': 'Edit',
+                'rename': 'Rename', 'delete': 'Delete'}.get(self.action_type, self.action_type.title())
+
+    @property
+    def status_badge(self):
+        return {
+            'pending':  '<span class="badge bg-warning text-dark">PENDING</span>',
+            'approved': '<span class="badge bg-success">APPROVED</span>',
+            'rejected': '<span class="badge bg-danger">REJECTED</span>',
+            'executed': '<span class="badge bg-primary">EXECUTED</span>',
+            'expired':  '<span class="badge bg-secondary">EXPIRED</span>',
+        }.get(self.status, '<span class="badge bg-secondary">UNKNOWN</span>')

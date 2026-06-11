@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+{% block title %}Event Monitor — FileVault{% endblock %}
+
+{% block head %}
+<style>
+.event-row { transition: background .4s; }
+.event-row.new-row { background: rgba(var(--bs-warning-rgb),.18) !important; }
+.event-icon { width:32px; text-align:center; font-size:1.1rem; }
+.outcome-success  { color: var(--bs-success); }
+.outcome-denied,
+.outcome-rejected { color: var(--bs-danger); }
+.outcome-requested,
+.outcome-approved { color: var(--bs-warning); }
+.outcome-executed  { color: var(--bs-primary); }
+#live-dot { width:10px;height:10px;border-radius:50%;background:#198754;display:inline-block;animation:pulse 1.2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.class-ts         { background:#7c0000;color:#fff; }
+.class-secret     { background:#b54a00;color:#fff; }
+.class-conf       { background:#856404;color:#fff; }
+.class-restricted { background:#084298;color:#fff; }
+.class-unclass    { background:#155724;color:#fff; }
+.class-badge { font-size:.65rem;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">
+        <span id="live-dot"></span>&nbsp; Real-Time Event Monitor
+      </span>
+      <span class="badge bg-secondary" id="event-count">{{ recent_events|length }} events loaded</span>
+      <button class="btn btn-sm btn-outline-danger" id="clear-btn">Clear display</button>
+      <button class="theme-toggle border-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- Stats row -->
+      <div class="row g-3 mb-4">
+        {% set outcomes = recent_events | groupby('outcome') %}
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-success">{{ recent_events | selectattr('outcome','eq','success') | list | length }}</div>
+            <div class="small text-muted">Successful</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-danger">{{ recent_events | selectattr('outcome','eq','denied') | list | length }}</div>
+            <div class="small text-muted">Denied</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-warning">{{ recent_events | selectattr('outcome','eq','requested') | list | length }}</div>
+            <div class="small text-muted">Requested</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-primary">{{ recent_events | selectattr('outcome','eq','executed') | list | length }}</div>
+            <div class="small text-muted">Executed</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-info">{{ recent_events | selectattr('action','eq','upload') | list | length }}</div>
+            <div class="small text-muted">Uploads</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="card text-center border-0 shadow-sm p-3">
+            <div class="fs-3 fw-bold text-danger">{{ recent_events | selectattr('action','eq','delete') | list | length }}</div>
+            <div class="small text-muted">Deletions</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live event table -->
+      <div class="card border-0 shadow-sm">
+        <div class="card-header d-flex align-items-center gap-2 bg-transparent border-bottom">
+          <i class="bi bi-activity text-success"></i>
+          <span class="fw-semibold">Live Event Feed</span>
+          <span class="badge bg-success ms-1" id="live-badge">LIVE</span>
+          <span class="ms-auto text-muted small">Last 200 events · auto-updates</span>
+        </div>
+        <div class="table-responsive" style="max-height:65vh;overflow-y:auto" id="event-table-wrap">
+          <table class="table table-sm table-hover align-middle mb-0" style="font-size:.82rem">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th style="width:140px">Timestamp</th>
+                <th style="width:32px"></th>
+                <th>Action</th>
+                <th>File</th>
+                <th>User</th>
+                <th>IP Address</th>
+                <th>Outcome</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="event-tbody">
+              {% for ev in recent_events %}
+              <tr class="event-row">
+                <td class="text-muted">{{ ev.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td class="event-icon"><i class="bi {{ ev.action_icon }}"></i></td>
+                <td class="fw-semibold text-uppercase" style="font-size:.75rem">{{ ev.action }}</td>
+                <td class="text-truncate" style="max-width:180px" title="{{ ev.file_name or '—' }}">
+                  {{ ev.file_name or '—' }}</td>
+                <td>{{ ev.user_name or '—' }}</td>
+                <td class="text-muted font-monospace" style="font-size:.75rem">{{ ev.ip_address or '—' }}</td>
+                <td>{{ ev.outcome_badge | safe }}</td>
+                <td class="text-muted text-truncate" style="max-width:200px" title="{{ ev.details or '' }}">
+                  {{ ev.details or '' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="8" class="text-center text-muted py-4">No events recorded yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const socket = io();
+let eventCount = {{ recent_events|length }};
+
+// Join the admin monitor room
+fetch('/api/admin/event-monitor/join', {method:'POST',
+  headers:{'X-Requested-With':'XMLHttpRequest','X-CSRFToken': document.querySelector('meta[name=csrf-token]')?.content||''}
+});
+
+const ICONS = {
+  upload:   'bi-cloud-upload text-success',
+  view:     'bi-eye text-info',
+  download: 'bi-download text-primary',
+  edit:     'bi-pencil text-warning',
+  rename:   'bi-cursor-text text-warning',
+  delete:   'bi-trash text-danger',
+  share:    'bi-share text-success',
+  copy:     'bi-files text-secondary',
+};
+const OUTCOME_BADGE = {
+  success:   '<span class="badge bg-success">SUCCESS</span>',
+  denied:    '<span class="badge bg-danger">DENIED</span>',
+  requested: '<span class="badge bg-warning text-dark">REQUESTED</span>',
+  approved:  '<span class="badge bg-primary">APPROVED</span>',
+  rejected:  '<span class="badge bg-danger">REJECTED</span>',
+  executed:  '<span class="badge bg-success">EXECUTED</span>',
+};
+
+socket.on('access_event', ev => {
+  const tbody = document.getElementById('event-tbody');
+  const icon  = ICONS[ev.action] || 'bi-activity text-muted';
+  const badge = OUTCOME_BADGE[ev.outcome] || `<span class="badge bg-secondary">${ev.outcome}</span>`;
+  const tr = document.createElement('tr');
+  tr.className = 'event-row new-row';
+  tr.innerHTML = `
+    <td class="text-muted">${ev.timestamp}</td>
+    <td class="event-icon"><i class="bi ${icon}"></i></td>
+    <td class="fw-semibold text-uppercase" style="font-size:.75rem">${ev.action}</td>
+    <td class="text-truncate" style="max-width:180px" title="${ev.file}">${ev.file}</td>
+    <td>${ev.user}</td>
+    <td class="text-muted font-monospace" style="font-size:.75rem">${ev.ip}</td>
+    <td>${badge}</td>
+    <td class="text-muted text-truncate" style="max-width:200px" title="${ev.details}">${ev.details}</td>`;
+  tbody.prepend(tr);
+  setTimeout(() => tr.classList.remove('new-row'), 2000);
+  eventCount++;
+  document.getElementById('event-count').textContent = `${eventCount} events`;
+  // Keep table trimmed to 200 rows
+  while (tbody.children.length > 200) tbody.removeChild(tbody.lastChild);
+});
+
+// New action request badge
+socket.on('action_request_new', data => {
+  const badge = document.getElementById('pending-req-badge');
+  if (badge) {
+    const n = parseInt(badge.textContent||'0') + 1;
+    badge.textContent = n;
+    badge.style.display = '';
+  }
+});
+
+document.getElementById('clear-btn').onclick = () => {
+  document.getElementById('event-tbody').innerHTML =
+    '<tr><td colspan="8" class="text-center text-muted py-4">Display cleared. New events will appear here.</td></tr>';
+  eventCount = 0;
+  document.getElementById('event-count').textContent = '0 events';
+};
+</script>
+{% endblock %}

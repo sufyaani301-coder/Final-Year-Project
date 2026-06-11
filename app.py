@@ -110,7 +110,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 from models import (
     db, MonitoringPolicy, User, File, FileShare, ShareToken,
     ActivityLog, IntegrityBaseline, IntegrityCheck, IntegrityAlert,
-    AlertComment,
+    AlertComment, FileAccessLog, ActionRequest,
 )
 db.init_app(app)
 migrate  = Migrate(app, db)
@@ -270,6 +270,31 @@ def broadcast_event(event_type, message, filename='', user_name=''):
         'user':      user_name,
         'timestamp': datetime.now(timezone.utc).strftime('%H:%M:%S'),
     })
+
+
+def _log_file_access(action, file_rec=None, outcome='success', details=None):
+    """Write a FileAccessLog entry and emit a real-time SocketIO event to admin monitors."""
+    entry = FileAccessLog(
+        file_id    = file_rec.id   if file_rec else None,
+        user_id    = current_user.id if current_user.is_authenticated else None,
+        action     = action,
+        outcome    = outcome,
+        ip_address = request.remote_addr or '',
+        file_name  = file_rec.original_name if file_rec else None,
+        user_name  = current_user.full_name if current_user.is_authenticated else 'anonymous',
+        details    = details,
+    )
+    db.session.add(entry)
+    # Real-time push to admin event monitor
+    socketio.emit('access_event', {
+        'action':    action,
+        'outcome':   outcome,
+        'file':      file_rec.original_name if file_rec else '—',
+        'user':      current_user.full_name if current_user.is_authenticated else 'anonymous',
+        'ip':        request.remote_addr or '',
+        'details':   details or '',
+        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+    }, room='admin_monitor')
 
 
 def _storage_type_breakdown(files):
@@ -627,28 +652,27 @@ def _fim_nav_context():
         return {'fim_open_alerts': 0, 'nav_total_files': 0}
     try:
         if current_user.is_admin:
-            open_count = IntegrityAlert.query.filter_by(status='open').count()
-            file_count = File.query.count()
-        elif current_user.role in ('analyst', 'auditor'):
-            # shared file IDs
-            shared_ids = db.session.query(FileShare.file_id).filter_by(
+            open_count   = IntegrityAlert.query.filter_by(status='open').count()
+            file_count   = File.query.count()
+            pending_reqs = ActionRequest.query.filter_by(status='pending').count()
+        else:
+            shared_fids = db.session.query(FileShare.file_id).filter_by(
                 shared_with_id=current_user.id
             ).subquery()
-            open_count = IntegrityAlert.query.filter(
+            accessible = db.session.query(File.id).filter(
+                File.id.in_(shared_fids),
+                File.classification >= current_user.clearance_level,
+            ).subquery()
+            open_count   = IntegrityAlert.query.filter(
                 IntegrityAlert.status == 'open',
-                IntegrityAlert.file_id.in_(shared_ids),
+                IntegrityAlert.file_id.in_(accessible),
             ).count()
-            file_count = db.session.query(FileShare).filter_by(
-                shared_with_id=current_user.id
-            ).count()
-        else:
-            uid_sub    = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
-            open_count = IntegrityAlert.query.filter(
-                IntegrityAlert.status == 'open',
-                IntegrityAlert.file_id.in_(uid_sub),
-            ).count()
-            file_count = File.query.filter_by(user_id=current_user.id).count()
-        return {'fim_open_alerts': open_count, 'nav_total_files': file_count}
+            file_count   = db.session.query(File.id).filter(File.id.in_(accessible)).count()
+            pending_reqs = ActionRequest.query.filter_by(
+                requested_by_id=current_user.id, status='approved'
+            ).count()  # approved but not yet executed
+        return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
+                'pending_action_requests': pending_reqs}
     except Exception:
         return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_change_requests': 0}
 
@@ -1021,17 +1045,17 @@ def dashboard():
     if is_admin:
         file_q  = File.query
         alert_q = IntegrityAlert.query
-    elif current_user.role in ('analyst', 'auditor'):
-        # Analysts and auditors see only files shared with them
+    else:
+        # Non-admins see only files shared with them AND within their clearance
         shared_fids = db.session.query(FileShare.file_id).filter_by(
             shared_with_id=current_user.id
         ).subquery()
-        file_q  = File.query.filter(File.id.in_(shared_fids))
-        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(shared_fids))
-    else:
-        file_q  = File.query.filter_by(user_id=current_user.id)
-        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
-        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
+        accessible = db.session.query(File.id).filter(
+            File.id.in_(shared_fids),
+            File.classification >= current_user.clearance_level,
+        ).subquery()
+        file_q  = File.query.filter(File.id.in_(accessible))
+        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(accessible))
 
     monitored = file_q.filter_by(monitoring_enabled=True)
 
@@ -1086,9 +1110,10 @@ def dashboard():
 @login_required
 @limiter.limit('20 per hour')
 def upload_file():
-    # Analysts and auditors have no write access — they only observe.
-    if current_user.role in ('analyst', 'auditor'):
-        return jsonify(success=False, error='Your role does not permit file uploads.'), 403
+    # Only administrators may upload files.
+    if not current_user.is_admin:
+        _log_file_access('upload', outcome='denied', details='Non-admin upload attempt blocked')
+        return jsonify(success=False, error='Only administrators can upload files.'), 403
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
     def err(msg, code=400):
@@ -1125,12 +1150,19 @@ def upload_file():
     size = len(raw_data)  # quota uses plaintext size
     mime = mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
 
+    classification = request.form.get('classification', 5, type=int)
+    if classification not in (1, 2, 3, 4, 5):
+        classification = 5
+
     try:
         rec = File(original_name=original_name, stored_name=stored_name,
                    size=size, mimetype=mime, user_id=current_user.id,
-                   is_encrypted=bool(_enc_key_raw), file_hash=sha256_hash)
+                   is_encrypted=bool(_enc_key_raw), file_hash=sha256_hash,
+                   classification=classification)
         db.session.add(rec)
-        log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)})')
+        log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)}) — class {classification}')
+        _log_file_access('upload', rec, 'success',
+                         f'Classification: {rec.classification_label}')
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -1158,8 +1190,27 @@ def upload_file():
 @login_required
 def download_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
+    if not current_user.can_view_file(rec):
+        _log_file_access('download', rec, 'denied', 'Insufficient clearance level')
+        db.session.commit()
         abort(403)
+    # Admins bypass the request workflow; all others need an approved ActionRequest
+    if not current_user.is_admin:
+        token = request.args.get('token', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=rec.id,
+            requested_by_id=current_user.id, action_type='download', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            _log_file_access('download', rec, 'denied', 'No approved request or token expired')
+            db.session.commit()
+            flash('You need an approved download request. Use the Request button.', 'warning')
+            return redirect(url_for('fim_monitoring'))
+        ar.status     = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
+        _log_file_access('download', rec, 'executed', f'Request #{ar.id} executed')
+    else:
+        _log_file_access('download', rec, 'success')
     if rec.is_encrypted:
         flash('This file is encrypted. Use the "Decrypt & Download" button and enter your password.', 'warning')
         return redirect(url_for('fim_monitoring'))
@@ -1173,14 +1224,28 @@ def download_file(file_uuid):
 @login_required
 @limiter.limit('5 per minute')
 def decrypt_file(file_uuid):
-    # Auditors have no file content access — they read logs and reports only.
-    if current_user.role == 'auditor':
-        return jsonify(success=False, error='Auditors cannot access file content.'), 403
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
-        abort(403)
+    if not current_user.can_view_file(rec):
+        _log_file_access('download', rec, 'denied', 'Insufficient clearance level')
+        db.session.commit()
+        return jsonify(success=False, error='Access denied: insufficient clearance level.'), 403
+    # Admins can decrypt directly; others need an approved ActionRequest token
+    if not current_user.is_admin:
+        token = request.form.get('token', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=rec.id,
+            requested_by_id=current_user.id, action_type='download', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            _log_file_access('download', rec, 'denied', 'No approved request or token expired')
+            db.session.commit()
+            return jsonify(success=False, error='No approved download request found or it has expired.'), 403
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
     password = request.form.get('password', '')
     if not current_user.check_password(password):
+        _log_file_access('download', rec, 'denied', 'Wrong password at execution step')
+        db.session.commit()
         return jsonify(success=False, error='Incorrect password. Use your FileVault login password.'), 403
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
     if not os.path.exists(file_path):
@@ -1195,6 +1260,7 @@ def decrypt_file(file_uuid):
         except Exception:
             return jsonify(success=False, error='Decryption failed — file may be corrupted or key mismatch.'), 500
     log_activity('download', f'Downloaded (decrypted) "{rec.original_name}"')
+    _log_file_access('download', rec, 'executed' if not current_user.is_admin else 'success')
     db.session.commit()
     from io import BytesIO
     return send_file(
@@ -1242,12 +1308,25 @@ def preview_file(file_uuid):
 @login_required
 def delete_file(file_uuid):
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-    # Analysts and auditors cannot delete — read-only roles.
-    if current_user.role in ('analyst', 'auditor'):
-        return (jsonify(success=False, error='Your role does not permit file deletion.'), 403) if is_ajax else abort(403)
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id and not current_user.is_admin:
-        return (jsonify(success=False, error='Forbidden'), 403) if is_ajax else abort(403)
+    if not current_user.is_admin:
+        # Non-admins must have an approved ActionRequest token + correct password
+        token    = request.form.get('token', '')
+        password = request.form.get('password', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=rec.id,
+            requested_by_id=current_user.id, action_type='delete', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            _log_file_access('delete', rec, 'denied', 'No approved request or token expired')
+            db.session.commit()
+            return (jsonify(success=False, error='Admin approval required before deletion.'), 403) if is_ajax else abort(403)
+        if not current_user.check_password(password):
+            _log_file_access('delete', rec, 'denied', 'Wrong password at execution step')
+            db.session.commit()
+            return (jsonify(success=False, error='Incorrect password.'), 403) if is_ajax else abort(403)
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
 
     name, stored = rec.original_name, rec.stored_name
     was_monitored = rec.monitoring_enabled
@@ -1276,6 +1355,7 @@ def delete_file(file_uuid):
     if os.path.exists(disk):
         os.remove(disk)
 
+    _log_file_access('delete', None, 'success', f'File "{name}" permanently deleted')
     broadcast_event('delete', f'{current_user.full_name} deleted "{name}"',
                     name, current_user.full_name)
     if is_ajax:
@@ -1288,8 +1368,23 @@ def delete_file(file_uuid):
 @login_required
 def rename_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id:
-        return jsonify(success=False, error='Forbidden'), 403
+    if not current_user.is_admin:
+        token    = request.form.get('token', '')
+        password = request.form.get('password', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=rec.id,
+            requested_by_id=current_user.id, action_type='rename', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            _log_file_access('rename', rec, 'denied', 'No approved request')
+            db.session.commit()
+            return jsonify(success=False, error='Admin approval required before renaming.'), 403
+        if not current_user.check_password(password):
+            _log_file_access('rename', rec, 'denied', 'Wrong password at execution step')
+            db.session.commit()
+            return jsonify(success=False, error='Incorrect password.'), 403
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
     new_name = request.form.get('name', '').strip()
     if not new_name:
         return jsonify(success=False, error='Name cannot be empty'), 400
@@ -1299,6 +1394,8 @@ def rename_file(file_uuid):
     old_name = rec.original_name
     rec.original_name = secure_filename(new_name)
     log_activity('rename', f'Renamed "{old_name}" → "{rec.original_name}"')
+    _log_file_access('rename', rec, 'executed' if not current_user.is_admin else 'success',
+                     f'{old_name} → {rec.original_name}')
 
     # Generate Medium integrity alert for rename event
     alert_generated = False
@@ -1354,25 +1451,183 @@ def rename_file(file_uuid):
 @app.route('/share/<file_uuid>', methods=['POST'])
 @login_required
 def share_file(file_uuid):
+    # Only admins control who has access to files
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Only administrators can grant file access.'), 403
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id:
-        abort(403)
     target = db.session.get(User, request.form.get('share_with_user_id', type=int))
     if not target:
         flash('User not found.', 'danger')
         return redirect(url_for('dashboard'))
+    if target.clearance_level > rec.classification:
+        flash(f'{target.full_name} (clearance {target.clearance_level}) does not have clearance for '
+              f'a level-{rec.classification} file.', 'danger')
+        return redirect(url_for('admin_panel'))
     if FileShare.query.filter_by(file_id=rec.id, shared_with_id=target.id).first():
         flash(f'Already shared with {target.full_name}.', 'info')
         return redirect(url_for('dashboard'))
     db.session.add(FileShare(file_id=rec.id, shared_with_id=target.id,
                              shared_by_id=current_user.id))
-    log_activity('share', f'Shared "{rec.original_name}" with {target.full_name}')
+    log_activity('share', f'Granted access to "{rec.original_name}" for {target.full_name}')
+    _log_file_access('share', rec, 'success',
+                     f'Access granted to {target.full_name} (clearance {target.clearance_level})')
     db.session.commit()
     broadcast_event('share',
-                    f'{current_user.full_name} shared "{rec.original_name}" with {target.full_name}',
+                    f'Admin granted "{rec.original_name}" access to {target.full_name}',
                     rec.original_name, current_user.full_name)
-    flash(f'Shared with {target.full_name}.', 'success')
+    flash(f'Access granted to {target.full_name}.', 'success')
     return redirect(url_for('dashboard'))
+
+
+# ---------------------------------------------------------------------------
+# Action Request workflow (FBI-style: request → approve/reject → password → execute)
+# ---------------------------------------------------------------------------
+
+@app.route('/request-action/<file_uuid>', methods=['POST'])
+@login_required
+@limiter.limit('20 per hour')
+def submit_action_request(file_uuid):
+    """User requests permission for download/edit/rename/delete. Admin must approve."""
+    rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+    if not current_user.can_view_file(rec):
+        return jsonify(success=False, error='You do not have clearance to access this file.'), 403
+
+    action_type   = request.form.get('action_type', '').strip()
+    justification = request.form.get('justification', '').strip()
+    if action_type not in ('download', 'edit', 'rename', 'delete'):
+        return jsonify(success=False, error='Invalid action type.'), 400
+    if not justification:
+        return jsonify(success=False, error='Justification is required.'), 400
+
+    # Check if there's already a pending request for the same file+action
+    existing = ActionRequest.query.filter_by(
+        file_id=rec.id, requested_by_id=current_user.id,
+        action_type=action_type, status='pending',
+    ).first()
+    if existing:
+        return jsonify(success=False, error='You already have a pending request for this action.'), 409
+
+    ar = ActionRequest(
+        file_id         = rec.id,
+        requested_by_id = current_user.id,
+        action_type     = action_type,
+        justification   = justification[:1000],
+    )
+    db.session.add(ar)
+    _log_file_access(action_type, rec, 'requested',
+                     f'Requested {action_type} — justification: {justification[:200]}')
+    db.session.commit()
+
+    # Notify admin in real time
+    socketio.emit('action_request_new', {
+        'request_id':  ar.id,
+        'action':      action_type,
+        'file':        rec.original_name,
+        'user':        current_user.full_name,
+        'clearance':   current_user.clearance_level,
+        'timestamp':   ar.requested_at.strftime('%H:%M:%S'),
+    })
+    return jsonify(success=True, request_id=ar.id,
+                   message='Request submitted. You will be notified when the administrator reviews it.')
+
+
+@app.route('/admin/action-requests')
+@login_required
+def admin_action_requests():
+    if not current_user.is_admin:
+        abort(403)
+    status_filter = request.args.get('status', 'pending')
+    q = ActionRequest.query
+    if status_filter:
+        q = q.filter_by(status=status_filter)
+    reqs = q.order_by(ActionRequest.requested_at.desc()).all()
+    return render_template('admin/action_requests.html',
+                           requests=reqs, status_filter=status_filter)
+
+
+@app.route('/admin/action-requests/<int:req_id>/approve', methods=['POST'])
+@login_required
+def admin_approve_action_request(req_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    ar = ActionRequest.query.get_or_404(req_id)
+    if ar.status != 'pending':
+        return jsonify(success=False, error='Request already reviewed'), 400
+
+    reason = request.form.get('reason', '').strip()
+    import secrets as _sec
+    ar.status       = 'approved'
+    ar.reviewed_by_id = current_user.id
+    ar.reviewed_at  = datetime.now(timezone.utc)
+    ar.admin_reason = reason or 'Approved.'
+    ar.exec_token   = _sec.token_urlsafe(32)
+    ar.expires_at   = datetime.now(timezone.utc) + timedelta(minutes=30)
+    _log_file_access(ar.action_type, ar.file, 'approved',
+                     f'Approved by {current_user.full_name}: {reason}')
+    db.session.commit()
+
+    # Notify user
+    socketio.emit('action_request_update', {
+        'request_id': ar.id,
+        'status':     'approved',
+        'reason':     ar.admin_reason,
+        'token':      ar.exec_token,
+        'expires_at': ar.expires_at.strftime('%H:%M:%S UTC'),
+        'user_id':    ar.requested_by_id,
+    })
+    return jsonify(success=True, message='Request approved. User notified with execution token.')
+
+
+@app.route('/admin/action-requests/<int:req_id>/reject', methods=['POST'])
+@login_required
+def admin_reject_action_request(req_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
+    ar = ActionRequest.query.get_or_404(req_id)
+    if ar.status != 'pending':
+        return jsonify(success=False, error='Request already reviewed'), 400
+
+    reason = request.form.get('reason', '').strip()
+    if not reason:
+        return jsonify(success=False, error='Rejection reason is required.'), 400
+
+    ar.status         = 'rejected'
+    ar.reviewed_by_id = current_user.id
+    ar.reviewed_at    = datetime.now(timezone.utc)
+    ar.admin_reason   = reason
+    _log_file_access(ar.action_type, ar.file, 'rejected',
+                     f'Rejected by {current_user.full_name}: {reason}')
+    db.session.commit()
+
+    socketio.emit('action_request_update', {
+        'request_id': ar.id,
+        'status':     'rejected',
+        'reason':     reason,
+        'user_id':    ar.requested_by_id,
+    })
+    return jsonify(success=True, message='Request rejected. User notified.')
+
+
+@app.route('/admin/event-monitor')
+@login_required
+def admin_event_monitor():
+    if not current_user.is_admin:
+        abort(403)
+    recent = FileAccessLog.query.order_by(
+        FileAccessLog.timestamp.desc()
+    ).limit(200).all()
+    return render_template('admin/event_monitor.html', recent_events=recent)
+
+
+@app.route('/api/admin/event-monitor/join', methods=['POST'])
+@login_required
+def join_monitor_room():
+    """Client calls this to subscribe to admin_monitor SocketIO room."""
+    if not current_user.is_admin:
+        return jsonify(success=False), 403
+    from flask_socketio import join_room
+    join_room('admin_monitor')
+    return jsonify(success=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1412,9 +1667,10 @@ def delete_share_link(token_str):
 @login_required
 @limiter.limit('30 per hour')
 def api_share_file(file_uuid):
+    # Only admins can grant file access
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Only administrators can grant file access.'), 403
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id:
-        return jsonify(success=False, error='Only the file owner can share it.'), 403
     email = (request.json or {}).get('email', '').strip().lower() if request.is_json \
             else request.form.get('email', '').strip().lower()
     if not email:
@@ -1422,14 +1678,18 @@ def api_share_file(file_uuid):
     target = User.query.filter(db.func.lower(User.email) == email).first()
     if not target:
         return jsonify(success=False, error='No account found with that email.'), 404
-    if target.id == current_user.id:
-        return jsonify(success=False, error="You can't share a file with yourself."), 400
+    if target.clearance_level > rec.classification:
+        return jsonify(success=False,
+            error=f'{target.full_name} has clearance level {target.clearance_level} but this file '
+                  f'requires level {rec.classification} or higher.'), 403
     if FileShare.query.filter_by(file_id=rec.id, shared_with_id=target.id).first():
         return jsonify(success=False, error=f'Already shared with {target.full_name}.'), 409
     db.session.add(FileShare(file_id=rec.id, shared_with_id=target.id, shared_by_id=current_user.id))
-    log_activity('share', f'Shared "{rec.original_name}" with {target.full_name}')
+    log_activity('share', f'Granted access to "{rec.original_name}" → {target.full_name}')
+    _log_file_access('share', rec, 'success',
+                     f'Access granted to {target.full_name} (clearance {target.clearance_level})')
     db.session.commit()
-    return jsonify(success=True, message=f'Shared with {target.full_name}.', user={
+    return jsonify(success=True, message=f'Access granted to {target.full_name}.', user={
         'id': target.id, 'name': target.full_name, 'email': target.email,
     })
 
@@ -1659,6 +1919,26 @@ def change_role(user_id):
     return redirect(url_for('admin_panel'))
 
 
+@app.route('/admin/set-clearance/<int:user_id>', methods=['POST'])
+@login_required
+def set_clearance(user_id):
+    if not current_user.is_admin:
+        abort(403)
+    user = db.session.get(User, user_id) or abort(404)
+    level = request.form.get('clearance_level', 5, type=int)
+    if level not in (1, 2, 3, 4, 5):
+        flash('Invalid clearance level.', 'danger')
+        return redirect(url_for('admin_panel'))
+    user.clearance_level = level
+    db.session.commit()
+    log_activity('profile', f'Set clearance of {user.full_name} to L{level} ({user.clearance_label})')
+    _log_file_access('copy', None, 'success',
+                     f'Admin set clearance of {user.full_name} to L{level}')
+    db.session.commit()
+    flash(f'Clearance of {user.full_name} set to L{level} {user.clearance_label}.', 'success')
+    return redirect(url_for('admin_panel'))
+
+
 @app.route('/verify/<file_uuid>')
 @login_required
 def verify_file(file_uuid):
@@ -1723,14 +2003,16 @@ def fim_monitoring():
 
     if current_user.is_admin:
         q = File.query
-    elif current_user.role in ('analyst', 'auditor'):
-        # Read-only roles see only files that have been explicitly shared with them
+    else:
+        # Non-admins see only files at or below their clearance level
+        # AND that have been explicitly shared with them by admin
         shared_fids = db.session.query(FileShare.file_id).filter_by(
             shared_with_id=current_user.id
         ).subquery()
-        q = File.query.filter(File.id.in_(shared_fids))
-    else:
-        q = File.query.filter_by(user_id=current_user.id)
+        q = File.query.filter(
+            File.id.in_(shared_fids),
+            File.classification >= current_user.clearance_level,
+        )
     if query:
         q = q.filter(File.original_name.ilike(f'%{query}%'))
     if status:

@@ -126,8 +126,8 @@
                 </td>
                 <td>
                   {% if u.id != current_user.id %}
-                  <div class="d-flex gap-1 align-items-center">
-                    <!-- Role change dropdown -->
+                  <div class="d-flex gap-1 align-items-center flex-wrap">
+                    <!-- Role change -->
                     <form method="POST" action="{{ url_for('change_role', user_id=u.id) }}" class="d-flex gap-1">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                       <select name="role" class="form-select form-select-sm" style="width:auto;font-size:.75rem"
@@ -136,6 +136,17 @@
                         <option value="auditor"     {% if u.role=='auditor'     %}selected{% endif %}>Auditor</option>
                         <option value="analyst"     {% if u.role=='analyst'     %}selected{% endif %}>Analyst</option>
                         <option value="super_admin" {% if u.role=='super_admin' %}selected{% endif %}>Super Admin</option>
+                      </select>
+                    </form>
+                    <!-- Clearance level -->
+                    <form method="POST" action="{{ url_for('set_clearance', user_id=u.id) }}" class="d-flex gap-1">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                      <select name="clearance_level" class="form-select form-select-sm"
+                              style="width:auto;font-size:.72rem" onchange="this.form.submit()"
+                              title="Set clearance level">
+                        {% for lvl, lbl in [(1,'L1 TOP SECRET'),(2,'L2 SECRET'),(3,'L3 CONFIDENTIAL'),(4,'L4 RESTRICTED'),(5,'L5 UNCLASSIFIED')] %}
+                        <option value="{{ lvl }}" {% if u.clearance_level==lvl %}selected{% endif %}>{{ lbl }}</option>
+                        {% endfor %}
                       </select>
                     </form>
                     <form method="POST" action="{{ url_for('delete_user', user_id=u.id) }}"

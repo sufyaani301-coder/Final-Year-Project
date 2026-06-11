@@ -85,6 +85,24 @@
         <i class="bi bi-person-gear me-2"></i>Admin Panel
       </a>
     </li>
+    <li class="nav-item">
+      <a href="{{ url_for('admin_action_requests') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'admin_action_requests' %}active{% endif %}">
+        <i class="bi bi-clipboard-check me-2"></i>Action Requests
+        {% if pending_action_requests and pending_action_requests > 0 %}
+        <span class="badge bg-warning text-dark ms-auto" id="pending-req-badge">{{ pending_action_requests }}</span>
+        {% else %}
+        <span class="badge bg-warning text-dark ms-auto d-none" id="pending-req-badge">0</span>
+        {% endif %}
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="{{ url_for('admin_event_monitor') }}"
+         class="nav-link sidebar-link {% if request.endpoint == 'admin_event_monitor' %}active{% endif %}">
+        <i class="bi bi-activity me-2"></i>Event Monitor
+        <span class="badge bg-success ms-auto" style="font-size:.6rem">LIVE</span>
+      </a>
+    </li>
     {% endif %}
   </ul>
 
@@ -94,14 +112,16 @@
       <div class="lh-sm overflow-hidden flex-grow-1">
         <div class="sidebar-user-name">{{ current_user.full_name }}</div>
         <div class="sidebar-user-email">
-          {% if current_user.role in ('analyst', 'auditor', 'super_admin') %}
-          <span class="badge badge-sm
-            {% if current_user.role == 'super_admin' %}bg-danger
-            {% elif current_user.role == 'analyst' %}bg-warning text-dark
-            {% else %}bg-secondary{% endif %}"
-            style="font-size:.6rem;letter-spacing:.04em">
-            {{ current_user.role | upper }}
+          {% if not current_user.is_admin %}
+          {% set cl = current_user.clearance_level %}
+          <span class="badge"
+            style="font-size:.58rem;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:3px;
+              background:{% if cl==1 %}#7c0000{% elif cl==2 %}#b54a00{% elif cl==3 %}#856404
+              {% elif cl==4 %}#084298{% else %}#155724{% endif %}">
+            L{{ cl }}&nbsp;{{ current_user.clearance_label }}
           </span>
+          {% else %}
+          <span class="badge bg-danger" style="font-size:.58rem;font-weight:700;letter-spacing:.04em">ADMIN</span>
           {% endif %}
           {{ current_user.email }}
         </div>

@@ -101,6 +101,8 @@ with app.app_context():
         "ALTER TABLE change_requests ADD COLUMN executed_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN email_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE users ADD COLUMN alert_email VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN clearance_level INTEGER NOT NULL DEFAULT 5",
+        "ALTER TABLE files ADD COLUMN classification INTEGER NOT NULL DEFAULT 5",
     ]:
         try:
             db.session.execute(text(_stmt))

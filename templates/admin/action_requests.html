@@ -1,0 +1,262 @@
+{% extends 'base.html' %}
+{% block title %}Action Requests — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">Action Requests</span>
+      <button class="theme-toggle border-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- Status filter tabs -->
+      <ul class="nav nav-tabs mb-4">
+        {% for s, label in [('pending','Pending'),('approved','Approved'),('rejected','Rejected'),('executed','Executed')] %}
+        <li class="nav-item">
+          <a class="nav-link {% if status_filter==s %}active{% endif %}"
+             href="{{ url_for('admin_action_requests', status=s) }}">
+            {{ label }}
+            {% if s == 'pending' %}
+            <span class="badge bg-warning text-dark ms-1" id="pending-req-badge">
+              {{ requests|length if status_filter=='pending' else '' }}
+            </span>
+            {% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+
+      {% if requests %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle" style="font-size:.875rem">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>User</th>
+              <th>Clearance</th>
+              <th>File</th>
+              <th>Classification</th>
+              <th>Action</th>
+              <th>Justification</th>
+              <th>Requested</th>
+              <th>Status</th>
+              {% if status_filter == 'pending' %}<th>Review</th>{% endif %}
+              {% if status_filter in ('approved','rejected','executed') %}<th>Admin Note</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+          {% for ar in requests %}
+          <tr>
+            <td class="text-muted">#{{ ar.id }}</td>
+            <td>
+              <div class="fw-semibold">{{ ar.requested_by.full_name }}</div>
+              <div class="text-muted small">{{ ar.requested_by.email }}</div>
+            </td>
+            <td>
+              {% set cl = ar.requested_by.clearance_level %}
+              <span class="badge class-badge
+                {% if cl==1 %}class-ts{% elif cl==2 %}class-secret
+                {% elif cl==3 %}class-conf{% elif cl==4 %}class-restricted
+                {% else %}class-unclass{% endif %}">
+                L{{ cl }}
+              </span>
+            </td>
+            <td class="fw-semibold">
+              {% if ar.file %}{{ ar.file.original_name }}{% else %}<span class="text-muted">deleted</span>{% endif %}
+            </td>
+            <td>
+              {% if ar.file %}
+              {% set fc = ar.file.classification %}
+              <span class="badge class-badge
+                {% if fc==1 %}class-ts{% elif fc==2 %}class-secret
+                {% elif fc==3 %}class-conf{% elif fc==4 %}class-restricted
+                {% else %}class-unclass{% endif %}">
+                {{ ar.file.classification_label }}
+              </span>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              <span class="badge
+                {% if ar.action_type=='delete' %}bg-danger
+                {% elif ar.action_type=='download' %}bg-primary
+                {% elif ar.action_type=='edit' %}bg-warning text-dark
+                {% else %}bg-secondary{% endif %}">
+                {{ ar.action_label }}
+              </span>
+            </td>
+            <td class="text-muted small" style="max-width:240px">
+              {{ ar.justification or '—' }}
+            </td>
+            <td class="text-muted small">{{ ar.requested_at.strftime('%b %d %H:%M') }}</td>
+            <td>{{ ar.status_badge | safe }}</td>
+
+            {% if status_filter == 'pending' %}
+            <td>
+              <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-success approve-btn"
+                        data-id="{{ ar.id }}" data-name="{{ ar.file.original_name if ar.file else '' }}">
+                  <i class="bi bi-check-lg"></i> Approve
+                </button>
+                <button class="btn btn-sm btn-danger reject-btn"
+                        data-id="{{ ar.id }}">
+                  <i class="bi bi-x-lg"></i> Reject
+                </button>
+              </div>
+            </td>
+            {% endif %}
+
+            {% if status_filter in ('approved','rejected','executed') %}
+            <td class="text-muted small">{{ ar.admin_reason or '—' }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        No {{ status_filter }} requests.
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+<!-- Approve modal -->
+<div class="modal fade" id="approveModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-check-circle-fill text-success me-2"></i>Approve Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Approve <strong id="approve-action-label"></strong> for
+          <span class="badge bg-primary" id="approve-file-name"></span>?</p>
+        <p class="text-muted small">The user will receive a 30-minute execution token and must confirm with their account password.</p>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Reason / Note (optional)</label>
+          <textarea class="form-control" id="approve-reason" rows="2"
+                    placeholder="e.g. Verified business need, approved for audit purposes"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-success" id="confirm-approve-btn">
+          <i class="bi bi-check-lg me-1"></i>Confirm Approval
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reject modal -->
+<div class="modal fade" id="rejectModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-x-circle-fill text-danger me-2"></i>Reject Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Reason for rejection <span class="text-danger">*</span></label>
+          <textarea class="form-control" id="reject-reason" rows="3"
+                    placeholder="e.g. No valid business need; file is classified above requestor's clearance"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger" id="confirm-reject-btn">
+          <i class="bi bi-x-lg me-1"></i>Confirm Rejection
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.class-ts         { background:#7c0000;color:#fff; }
+.class-secret     { background:#b54a00;color:#fff; }
+.class-conf       { background:#856404;color:#fff; }
+.class-restricted { background:#084298;color:#fff; }
+.class-unclass    { background:#155724;color:#fff; }
+.class-badge { font-size:.65rem;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px; }
+</style>
+<script>
+const socket = io();
+let currentReqId = null;
+
+document.querySelectorAll('.approve-btn').forEach(btn => {
+  btn.onclick = () => {
+    currentReqId = btn.dataset.id;
+    document.getElementById('approve-action-label').textContent = btn.closest('tr').querySelector('td:nth-child(6) .badge').textContent.trim();
+    document.getElementById('approve-file-name').textContent  = btn.dataset.name;
+    document.getElementById('approve-reason').value = '';
+    new bootstrap.Modal('#approveModal').show();
+  };
+});
+
+document.querySelectorAll('.reject-btn').forEach(btn => {
+  btn.onclick = () => {
+    currentReqId = btn.dataset.id;
+    document.getElementById('reject-reason').value = '';
+    new bootstrap.Modal('#rejectModal').show();
+  };
+});
+
+document.getElementById('confirm-approve-btn').onclick = async () => {
+  const reason = document.getElementById('approve-reason').value.trim();
+  const fd = new FormData();
+  fd.append('reason', reason);
+  fd.append('csrf_token', document.querySelector('[name=csrf_token]')?.value || '');
+  const res = await fetch(`/admin/action-requests/${currentReqId}/approve`, {method:'POST', body:fd});
+  const data = await res.json();
+  if (data.success) { location.reload(); }
+  else { alert(data.error || 'Error'); }
+};
+
+document.getElementById('confirm-reject-btn').onclick = async () => {
+  const reason = document.getElementById('reject-reason').value.trim();
+  if (!reason) { alert('Rejection reason is required.'); return; }
+  const fd = new FormData();
+  fd.append('reason', reason);
+  fd.append('csrf_token', document.querySelector('[name=csrf_token]')?.value || '');
+  const res = await fetch(`/admin/action-requests/${currentReqId}/reject`, {method:'POST', body:fd});
+  const data = await res.json();
+  if (data.success) { location.reload(); }
+  else { alert(data.error || 'Error'); }
+};
+
+// Real-time new request notification
+socket.on('action_request_new', data => {
+  const badge = document.getElementById('pending-req-badge');
+  if (badge) {
+    const n = parseInt(badge.textContent||'0') + 1;
+    badge.textContent = n;
+  }
+  // Show a toast
+  const toast = document.createElement('div');
+  toast.className = 'toast show position-fixed bottom-0 end-0 m-3 border-warning';
+  toast.style.zIndex = 9999;
+  toast.innerHTML = `<div class="toast-header bg-warning text-dark">
+    <i class="bi bi-bell-fill me-2"></i><strong class="me-auto">New Action Request</strong>
+    <button type="button" class="btn-close" onclick="this.closest('.toast').remove()"></button>
+  </div>
+  <div class="toast-body">
+    <strong>${data.user}</strong> (L${data.clearance}) requests <strong>${data.action}</strong> on <em>${data.file}</em>
+  </div>`;
+  document.body.append(toast);
+  setTimeout(() => toast.remove(), 8000);
+});
+</script>
+{% endblock %}
