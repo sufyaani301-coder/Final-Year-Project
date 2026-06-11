@@ -110,7 +110,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 from models import (
     db, MonitoringPolicy, User, File, FileShare, ShareToken,
     ActivityLog, IntegrityBaseline, IntegrityCheck, IntegrityAlert,
-    AlertComment, ChangeRequest,
+    AlertComment,
 )
 db.init_app(app)
 migrate  = Migrate(app, db)
@@ -627,19 +627,28 @@ def _fim_nav_context():
         return {'fim_open_alerts': 0, 'nav_total_files': 0}
     try:
         if current_user.is_admin:
-            open_count   = IntegrityAlert.query.filter_by(status='open').count()
-            file_count   = File.query.count()
-            pending_reqs = ChangeRequest.query.filter_by(status='pending').count()
+            open_count = IntegrityAlert.query.filter_by(status='open').count()
+            file_count = File.query.count()
+        elif current_user.role in ('analyst', 'auditor'):
+            # shared file IDs
+            shared_ids = db.session.query(FileShare.file_id).filter_by(
+                shared_with_id=current_user.id
+            ).subquery()
+            open_count = IntegrityAlert.query.filter(
+                IntegrityAlert.status == 'open',
+                IntegrityAlert.file_id.in_(shared_ids),
+            ).count()
+            file_count = db.session.query(FileShare).filter_by(
+                shared_with_id=current_user.id
+            ).count()
         else:
             uid_sub    = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
             open_count = IntegrityAlert.query.filter(
                 IntegrityAlert.status == 'open',
                 IntegrityAlert.file_id.in_(uid_sub),
             ).count()
-            file_count   = File.query.filter_by(user_id=current_user.id).count()
-            pending_reqs = 0
-        return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
-                'pending_change_requests': pending_reqs}
+            file_count = File.query.filter_by(user_id=current_user.id).count()
+        return {'fim_open_alerts': open_count, 'nav_total_files': file_count}
     except Exception:
         return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_change_requests': 0}
 
@@ -1012,6 +1021,13 @@ def dashboard():
     if is_admin:
         file_q  = File.query
         alert_q = IntegrityAlert.query
+    elif current_user.role in ('analyst', 'auditor'):
+        # Analysts and auditors see only files shared with them
+        shared_fids = db.session.query(FileShare.file_id).filter_by(
+            shared_with_id=current_user.id
+        ).subquery()
+        file_q  = File.query.filter(File.id.in_(shared_fids))
+        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(shared_fids))
     else:
         file_q  = File.query.filter_by(user_id=current_user.id)
         uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
@@ -1070,6 +1086,9 @@ def dashboard():
 @login_required
 @limiter.limit('20 per hour')
 def upload_file():
+    # Analysts and auditors have no write access — they only observe.
+    if current_user.role in ('analyst', 'auditor'):
+        return jsonify(success=False, error='Your role does not permit file uploads.'), 403
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
     def err(msg, code=400):
@@ -1154,6 +1173,9 @@ def download_file(file_uuid):
 @login_required
 @limiter.limit('5 per minute')
 def decrypt_file(file_uuid):
+    # Auditors have no file content access — they read logs and reports only.
+    if current_user.role == 'auditor':
+        return jsonify(success=False, error='Auditors cannot access file content.'), 403
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
         abort(403)
@@ -1220,6 +1242,9 @@ def preview_file(file_uuid):
 @login_required
 def delete_file(file_uuid):
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    # Analysts and auditors cannot delete — read-only roles.
+    if current_user.role in ('analyst', 'auditor'):
+        return (jsonify(success=False, error='Your role does not permit file deletion.'), 403) if is_ajax else abort(403)
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if rec.user_id != current_user.id and not current_user.is_admin:
         return (jsonify(success=False, error='Forbidden'), 403) if is_ajax else abort(403)
@@ -1614,7 +1639,8 @@ def toggle_admin(user_id):
 @app.route('/admin/change-role/<int:user_id>', methods=['POST'])
 @login_required
 def change_role(user_id):
-    if not current_user.is_super_admin:
+    # Any admin can assign roles — previously restricted to super_admin only.
+    if not current_user.is_admin:
         abort(403)
     if user_id == current_user.id:
         flash("You can't change your own role.", 'warning')
@@ -1695,7 +1721,16 @@ def fim_monitoring():
     order  = request.args.get('order', 'desc')
     page   = request.args.get('page', 1, type=int)
 
-    q = File.query if current_user.is_admin else File.query.filter_by(user_id=current_user.id)
+    if current_user.is_admin:
+        q = File.query
+    elif current_user.role in ('analyst', 'auditor'):
+        # Read-only roles see only files that have been explicitly shared with them
+        shared_fids = db.session.query(FileShare.file_id).filter_by(
+            shared_with_id=current_user.id
+        ).subquery()
+        q = File.query.filter(File.id.in_(shared_fids))
+    else:
+        q = File.query.filter_by(user_id=current_user.id)
     if query:
         q = q.filter(File.original_name.ilike(f'%{query}%'))
     if status:
@@ -2197,175 +2232,7 @@ def fim_export_report():
     return send_file(output, mimetype='text/csv', as_attachment=True, download_name=fname)
 
 
-# ---------------------------------------------------------------------------
-# Change-request approval workflow
-# ---------------------------------------------------------------------------
-@app.route('/fim/change-request/<file_uuid>', methods=['POST'])
-@login_required
-def fim_submit_change_request(file_uuid):
-    """Non-admins submit a request; admins may still act directly."""
-    file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        return jsonify(success=False, error='Forbidden'), 403
-
-    action_type   = request.form.get('action_type', '').strip()
-    justification = request.form.get('justification', '').strip()
-    if action_type not in ('replace', 'delete', 'rename'):
-        return jsonify(success=False, error='Invalid action type'), 400
-
-    action_data  = {}
-    pending_file = None
-
-    if action_type == 'rename':
-        new_name = request.form.get('new_name', '').strip()
-        if not new_name:
-            return jsonify(success=False, error='New name is required'), 400
-        action_data['new_name'] = new_name
-
-    elif action_type == 'replace':
-        if 'file' not in request.files or not request.files['file'].filename:
-            return jsonify(success=False, error='No replacement file selected'), 400
-        f = request.files['file']
-        if not allowed_file(f.filename):
-            return jsonify(success=False, error='File type not allowed'), 400
-        pending_dir  = os.path.join(app.config['UPLOAD_FOLDER'], 'pending')
-        os.makedirs(pending_dir, exist_ok=True)
-        pending_name = f'{uuid.uuid4().hex}_{secure_filename(f.filename)}'
-        f.save(os.path.join(pending_dir, pending_name))
-        pending_file = pending_name
-        action_data['original_filename'] = f.filename
-
-    cr = ChangeRequest(
-        file_id         = file_rec.id,
-        requested_by_id = current_user.id,
-        action_type     = action_type,
-        action_data     = _json.dumps(action_data),
-        justification   = justification[:500] or None,
-        pending_file    = pending_file,
-    )
-    db.session.add(cr)
-    db.session.flush()
-    log_activity('change_request',
-                 f'Requested {action_type} on "{file_rec.original_name}" — awaiting approval')
-    db.session.commit()
-
-    socketio.emit('change_request', {
-        'request_id': cr.id,
-        'action':     action_type,
-        'filename':   file_rec.original_name,
-        'requester':  current_user.full_name,
-        'timestamp':  cr.requested_at.strftime('%H:%M:%S'),
-    })
-    return jsonify(success=True, request_id=cr.id,
-                   message='Authorization request sent to admin. You will be notified when reviewed.')
-
-
-@app.route('/admin/change-requests')
-@login_required
-def admin_change_requests():
-    if not current_user.is_admin:
-        abort(403)
-    status_filter = request.args.get('status', 'pending')
-    q = ChangeRequest.query
-    if status_filter:
-        q = q.filter_by(status=status_filter)
-    reqs = q.order_by(ChangeRequest.requested_at.desc()).all()
-    return render_template('admin/change_requests.html',
-                           change_requests=reqs, status_filter=status_filter)
-
-
-@app.route('/admin/change-requests/<int:req_id>/approve', methods=['POST'])
-@login_required
-def admin_approve_change_request(req_id):
-    if not current_user.is_admin:
-        return jsonify(success=False, error='Admin required'), 403
-    cr = ChangeRequest.query.get_or_404(req_id)
-    if cr.status != 'pending':
-        return jsonify(success=False, error='Request already reviewed'), 400
-    file_rec = cr.file
-    if not file_rec:
-        return jsonify(success=False, error='File no longer exists'), 404
-
-    note = request.form.get('note', '').strip()
-    try:
-        if cr.action_type == 'delete':
-            name, stored = file_rec.original_name, file_rec.stored_name
-            db.session.delete(file_rec)
-            db.session.flush()
-            disk = os.path.join(app.config['UPLOAD_FOLDER'], stored)
-            if os.path.exists(disk):
-                os.remove(disk)
-            log_activity('delete', f'[AUTHORIZED] Deleted "{name}" (req #{cr.id})')
-
-        elif cr.action_type == 'replace':
-            if cr.pending_file:
-                import shutil
-                src = os.path.join(app.config['UPLOAD_FOLDER'], 'pending', cr.pending_file)
-                dst = os.path.join(app.config['UPLOAD_FOLDER'], file_rec.stored_name)
-                if os.path.exists(src):
-                    shutil.move(src, dst)
-            _fim_capture_baseline(file_rec, current_user, reason='authorized_replace')
-            log_activity('tamper_simulation',
-                         f'[AUTHORIZED] Replaced "{file_rec.original_name}" (req #{cr.id})')
-
-        elif cr.action_type == 'rename':
-            new_name = cr.data.get('new_name', '')
-            if new_name:
-                old_name = file_rec.original_name
-                file_rec.original_name = secure_filename(new_name)
-                log_activity('rename',
-                             f'[AUTHORIZED] Renamed "{old_name}" → "{file_rec.original_name}" (req #{cr.id})')
-
-        cr.status         = 'approved'
-        cr.reviewed_by_id = current_user.id
-        cr.reviewed_at    = datetime.now(timezone.utc)
-        cr.review_note    = note
-        cr.executed_at    = datetime.now(timezone.utc)
-        db.session.commit()
-
-        socketio.emit('change_request_update', {
-            'request_id': cr.id,
-            'status':     'approved',
-            'reviewer':   current_user.full_name,
-            'note':       note,
-        })
-        return jsonify(success=True, message='Request approved and executed.')
-
-    except Exception as exc:
-        db.session.rollback()
-        app.logger.error('Change request execution failed: %s', exc)
-        return jsonify(success=False, error=str(exc)), 500
-
-
-@app.route('/admin/change-requests/<int:req_id>/reject', methods=['POST'])
-@login_required
-def admin_reject_change_request(req_id):
-    if not current_user.is_admin:
-        return jsonify(success=False, error='Admin required'), 403
-    cr = ChangeRequest.query.get_or_404(req_id)
-    if cr.status != 'pending':
-        return jsonify(success=False, error='Request already reviewed'), 400
-
-    note = request.form.get('note', '').strip()
-    if cr.pending_file:
-        p = os.path.join(app.config['UPLOAD_FOLDER'], 'pending', cr.pending_file)
-        if os.path.exists(p):
-            os.remove(p)
-
-    cr.status         = 'rejected'
-    cr.reviewed_by_id = current_user.id
-    cr.reviewed_at    = datetime.now(timezone.utc)
-    cr.review_note    = note
-    log_activity('change_request', f'Rejected change request #{cr.id}')
-    db.session.commit()
-
-    socketio.emit('change_request_update', {
-        'request_id': cr.id,
-        'status':     'rejected',
-        'reviewer':   current_user.full_name,
-        'note':       note,
-    })
-    return jsonify(success=True, message='Request rejected.')
+# Change-request approval workflow removed — users act directly on their own files.
 
 
 # ---------------------------------------------------------------------------
@@ -2376,6 +2243,8 @@ def admin_reject_change_request(req_id):
 def fim_replace_file(file_uuid):
     """Upload a new version of the file, overwriting it on disk without updating the baseline.
     The next integrity check will detect the hash mismatch and raise a Critical alert."""
+    if current_user.role in ('analyst', 'auditor'):
+        return jsonify(success=False, error='Your role does not permit file replacement.'), 403
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         return jsonify(success=False, error='Forbidden'), 403
@@ -2433,6 +2302,8 @@ def fim_replace_file(file_uuid):
 @app.route('/file/<file_uuid>/edit', methods=['GET'])
 @login_required
 def edit_file_page(file_uuid):
+    if current_user.role in ('analyst', 'auditor'):
+        abort(403)
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         abort(403)

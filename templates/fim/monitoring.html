@@ -11,10 +11,16 @@
     <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
       <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
       <span class="fw-semibold flex-grow-1">Monitored Files</span>
+      {% if current_user.role not in ('analyst', 'auditor') %}
       <button class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0"
               data-bs-toggle="modal" data-bs-target="#uploadModal">
         <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload</span>
       </button>
+      {% else %}
+      <span class="badge bg-secondary align-self-center">
+        {{ current_user.role | capitalize }} — read-only
+      </span>
+      {% endif %}
       <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
       <div class="dropdown flex-shrink-0">
         <button class="btn p-0 border-0" data-bs-toggle="dropdown"><div class="avatar-circle">{{ current_user.initials }}</div></button>
@@ -107,27 +113,33 @@
             <td class="text-muted small">{{ f.policy.name if f.policy else '—' }}</td>
             <td>
               <div class="d-flex gap-1 flex-wrap">
+
+                {# ── Auditor: view-only, no checks or downloads ─────────── #}
+                {% if current_user.role == 'auditor' %}
+                <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="View integrity details">
+                  <i class="bi bi-eye"></i>
+                </a>
+
+                {# ── Analyst: investigate shared files, no writes ─────────── #}
+                {% elif current_user.role == 'analyst' %}
                 {% if f.current_status == 'pending' %}
-                <!-- Capture initial baseline (no baseline exists yet) -->
-                <button class="btn btn-sm btn-outline-success" title="Capture baseline (first-time setup)"
+                <button class="btn btn-sm btn-outline-success" title="Capture baseline"
                         onclick="captureBaseline('{{ f.uuid }}', this)">
                   <i class="bi bi-database-add"></i>
                 </button>
                 {% else %}
-                <!-- Manual check -->
                 <button class="btn btn-sm btn-outline-info" title="Run integrity check"
                         onclick="runCheck('{{ f.uuid }}', this)">
                   <i class="bi bi-shield-check"></i>
                 </button>
                 {% endif %}
-                <!-- View details -->
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
                    class="btn btn-sm btn-outline-secondary" title="View details">
                   <i class="bi bi-eye"></i>
                 </a>
-                <!-- Download / Decrypt & Download -->
                 {% if f.is_encrypted %}
-                <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download (requires password)"
+                <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
                         onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-unlock"></i>
                 </button>
@@ -137,34 +149,51 @@
                   <i class="bi bi-download"></i>
                 </a>
                 {% endif %}
-                <!-- Edit (text files only) -->
+
+                {# ── Owner / Admin: full controls ─────────── #}
+                {% else %}
+                {% if f.current_status == 'pending' %}
+                <button class="btn btn-sm btn-outline-success" title="Capture baseline (first-time setup)"
+                        onclick="captureBaseline('{{ f.uuid }}', this)">
+                  <i class="bi bi-database-add"></i>
+                </button>
+                {% else %}
+                <button class="btn btn-sm btn-outline-info" title="Run integrity check"
+                        onclick="runCheck('{{ f.uuid }}', this)">
+                  <i class="bi bi-shield-check"></i>
+                </button>
+                {% endif %}
+                <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="View details">
+                  <i class="bi bi-eye"></i>
+                </a>
+                {% if f.is_encrypted %}
+                <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
+                        onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                  <i class="bi bi-unlock"></i>
+                </button>
+                {% else %}
+                <a href="{{ url_for('download_file', file_uuid=f.uuid) }}"
+                   class="btn btn-sm btn-outline-secondary" title="Download">
+                  <i class="bi bi-download"></i>
+                </a>
+                {% endif %}
                 {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
                 {% if _fext in ('txt','csv','json','xml') and (f.user_id == current_user.id or current_user.is_admin) %}
                 <a href="{{ url_for('edit_file_page', file_uuid=f.uuid) }}"
-                   class="btn btn-sm btn-outline-info" title="Edit file content in browser">
+                   class="btn btn-sm btn-outline-info" title="Edit in browser">
                   <i class="bi bi-pencil-square"></i>
                 </a>
                 {% endif %}
                 {% if f.user_id == current_user.id or current_user.is_admin %}
-                <!-- Rename -->
-                <button class="btn btn-sm btn-outline-secondary" title="Rename file (generates Medium alert)"
+                <button class="btn btn-sm btn-outline-secondary" title="Rename file"
                         onclick="openRename('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-pencil"></i>
                 </button>
-                <!-- Replace: owner or admin can always replace directly -->
-                {% if current_user.is_admin or f.user_id == current_user.id %}
                 <button class="btn btn-sm btn-outline-primary" title="Replace file content"
                         onclick="openReplace('{{ f.uuid }}', '{{ f.original_name | e }}')">
                   <i class="bi bi-file-earmark-arrow-up"></i>
                 </button>
-                {% elif f.monitoring_enabled %}
-                <!-- Shared access + monitored: must request authorization -->
-                <button class="btn btn-sm btn-outline-primary" title="Request authorized replacement"
-                        onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'replace')">
-                  <i class="bi bi-send-check"></i>
-                </button>
-                {% endif %}
-                <!-- Share (owner only) -->
                 {% if f.user_id == current_user.id %}
                 <button class="btn btn-sm btn-outline-success" title="Share file"
                         onclick="openShare('{{ f.uuid }}', '{{ f.original_name | e }}')">
@@ -172,26 +201,18 @@
                 </button>
                 {% endif %}
                 {% if current_user.is_admin %}
-                <!-- Reset baseline (admin only) -->
                 <button class="btn btn-sm btn-outline-info" title="Reset baseline"
                         onclick="resetBaseline('{{ f.uuid }}', '{{ f.original_name | e }}', this)">
                   <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
                 {% endif %}
-                <!-- Delete: owner or admin can always delete directly -->
-                {% if current_user.is_admin or f.user_id == current_user.id %}
                 <button class="btn btn-sm btn-outline-danger" title="Delete file"
                         onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
                   <i class="bi bi-trash"></i>
                 </button>
-                {% elif f.monitoring_enabled %}
-                <!-- Shared access + monitored: request authorization -->
-                <button class="btn btn-sm btn-outline-danger" title="Request authorized deletion"
-                        onclick="openAuthRequest('{{ f.uuid }}', '{{ f.original_name | e }}', 'delete')">
-                  <i class="bi bi-send-check"></i>
-                </button>
                 {% endif %}
                 {% endif %}
+
               </div>
             </td>
           </tr>
