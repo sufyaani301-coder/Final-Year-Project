@@ -1307,14 +1307,17 @@ def download_file(file_uuid):
             db.session.commit()
             flash('You need an approved download request. Use the Request button.', 'warning')
             return redirect(url_for('fim_monitoring'))
+        if rec.is_encrypted:
+            flash('This file is encrypted. Use the "Decrypt & Download" button to access it securely.', 'warning')
+            return redirect(url_for('fim_monitoring'))
         ar.status     = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
         _log_file_access('download', rec, 'executed', f'Request #{ar.id} executed')
     else:
+        if rec.is_encrypted:
+            flash('This file is encrypted. Use the "Decrypt & Download" button to access it securely.', 'warning')
+            return redirect(url_for('fim_monitoring'))
         _log_file_access('download', rec, 'success')
-    if rec.is_encrypted:
-        flash('This file is encrypted. Use the "Decrypt & Download" button and enter your password.', 'warning')
-        return redirect(url_for('fim_monitoring'))
     log_activity('download', f'Downloaded "{rec.original_name}"')
     db.session.commit()
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
@@ -1682,6 +1685,8 @@ def submit_action_request(file_uuid):
     db.session.add(ar)
     _log_file_access(action_type, rec, 'requested',
                      f'Requested {action_type} — justification: {justification[:200]}')
+    log_activity('request_submitted',
+                 f'Submitted {action_type} request for "{rec.original_name}" — {justification[:200]}')
     db.session.commit()
 
     # Notify admin via SocketIO (real-time) and email
@@ -1768,7 +1773,21 @@ def admin_approve_action_request(req_id):
     ar.expires_at   = datetime.now(timezone.utc) + timedelta(minutes=30)
     _log_file_access(ar.action_type, ar.file, 'approved',
                      f'Approved by {current_user.full_name}: {reason}')
+    log_activity('request_approved',
+                 f'Approved {ar.action_type} request #{ar.id} for "{ar.file.original_name if ar.file else "?"}" '
+                 f'by {ar.requested_by.full_name} — {reason or "No note"}')
     db.session.commit()
+
+    _notify(
+        f'Request Approved — {ar.action_type.title()} on {ar.file.original_name if ar.file else "file"}',
+        f'Admin:      {current_user.full_name}\n'
+        f'User:       {ar.requested_by.full_name} ({ar.requested_by.email})\n'
+        f'File:       {ar.file.original_name if ar.file else "(deleted)"}\n'
+        f'Action:     {ar.action_label}\n'
+        f'Note:       {reason or "—"}\n'
+        f'Expires in: 30 minutes\n'
+        f'Request ID: #{ar.id}',
+    )
 
     # Notify user via SocketIO (real-time) and email
     socketio.emit('action_request_update', {
@@ -1813,7 +1832,20 @@ def admin_reject_action_request(req_id):
     ar.admin_reason   = reason
     _log_file_access(ar.action_type, ar.file, 'rejected',
                      f'Rejected by {current_user.full_name}: {reason}')
+    log_activity('request_rejected',
+                 f'Rejected {ar.action_type} request #{ar.id} for "{ar.file.original_name if ar.file else "?"}" '
+                 f'by {ar.requested_by.full_name} — {reason}')
     db.session.commit()
+
+    _notify(
+        f'Request Rejected — {ar.action_type.title()} on {ar.file.original_name if ar.file else "file"}',
+        f'Admin:    {current_user.full_name}\n'
+        f'User:     {ar.requested_by.full_name} ({ar.requested_by.email})\n'
+        f'File:     {ar.file.original_name if ar.file else "(deleted)"}\n'
+        f'Action:   {ar.action_label}\n'
+        f'Reason:   {reason}\n'
+        f'Request ID: #{ar.id}',
+    )
 
     socketio.emit('action_request_update', {
         'request_id': ar.id,
@@ -2283,8 +2315,9 @@ def fim_monitoring():
             ActionRequest.requested_by_id == current_user.id,
             ActionRequest.status == 'approved',
             ActionRequest.expires_at > now_naive,
-        ).all():
-            my_approved_by_file[ar.file_id] = ar
+        ).order_by(ActionRequest.reviewed_at.desc()).all():
+            if ar.file_id not in my_approved_by_file:  # most-recently-approved wins
+                my_approved_by_file[ar.file_id] = ar
 
     return render_template('fim/monitoring.html',
         files=pagination.items,
@@ -2807,6 +2840,12 @@ def edit_file_page(file_uuid):
 @login_required
 def edit_file_save(file_uuid):
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
+
+    locked, lock_msg = _check_pw_locked(current_user.id)
+    if locked:
+        return jsonify(success=False, error=lock_msg), 429
+
+    ar = None
     if not current_user.is_admin:
         token = request.form.get('edit_token', '') or request.args.get('token', '')
         ar = ActionRequest.query.filter_by(
@@ -2815,13 +2854,20 @@ def edit_file_save(file_uuid):
         ).first()
         if not ar or ar.is_expired:
             return jsonify(success=False, error='No approved edit request found or token expired.'), 403
-        ar.status      = 'executed'
-        ar.executed_at = datetime.now(timezone.utc)
 
-    # Password confirmation required from everyone
+    # Password confirmation required from everyone — check BEFORE consuming the token
     password = request.form.get('password', '')
     if not current_user.check_password(password):
-        return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to save.'), 401
+        newly_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, 'edit file save')
+        msg = 'Incorrect password. Please confirm your FileVault password to save.'
+        if newly_locked:
+            msg = f'Too many failed attempts. Account locked for {_PW_LOCK_MINUTES} minutes.'
+        return jsonify(success=False, error=msg), 401
+    _pw_attempts[current_user.id]['count'] = 0
+
+    if ar:
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
 
     ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
     if ext not in EDITABLE_EXTENSIONS:
