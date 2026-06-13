@@ -743,6 +743,13 @@ def auth_login():
             session['_logged_in_this_session'] = True
             log_activity('login', f'Logged in from {_get_real_ip()}')
             db.session.commit()
+            _notify(
+                f'User Login — {user.full_name}',
+                f'User:       {user.full_name} ({user.email})\n'
+                f'Role:       {"Admin" if user.is_admin else "User"}\n'
+                f'IP address: {_get_real_ip()}\n'
+                f'Time:       {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}',
+            )
             flash(f'Welcome back, {user.full_name.split()[0]}!', 'success')
             nxt = request.args.get('next', '')
             return redirect(nxt if nxt and _is_safe_redirect(nxt) else url_for('dashboard'))
