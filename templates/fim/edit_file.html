@@ -146,39 +146,16 @@ function showToast(msg, type = 'info') {
   el.addEventListener('hidden.bs.toast', () => el.remove());
 }
 
-async function saveFile(password) {
-  const btn  = document.getElementById('saveBtn');
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
-
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  form.append('content', editor.getValue());
-  if (EDIT_TOKEN) form.append('edit_token', EDIT_TOKEN);
-  if (password)   form.append('password', password);
-
-  try {
-    const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
-    const d = await r.json();
-    btn.disabled = false;
-    btn.innerHTML = orig;
-    if (d.success) {
-      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger', replaced:'info' };
-      showToast(d.message, colours[d.status] || 'info');
-    } else {
-      showToast(d.error || 'Save failed.', 'danger');
-    }
-  } catch(e) {
-    btn.disabled = false;
-    btn.innerHTML = orig;
-    showToast('Network error — file may not have been saved.', 'danger');
-  }
-}
+let _pwModal = null;
 
 document.getElementById('saveBtn').addEventListener('click', () => {
   document.getElementById('pwInput').value = '';
   document.getElementById('pwError').style.display = 'none';
+  document.getElementById('pwConfirmSave').disabled = false;
+  document.getElementById('pwConfirmSave').innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+  if (!_pwModal) _pwModal = new bootstrap.Modal(document.getElementById('pwConfirmModal'));
+  _pwModal.show();
+  setTimeout(() => document.getElementById('pwInput').focus(), 400);
 });
 
 document.getElementById('pwConfirmSave')?.addEventListener('click', async () => {
@@ -188,8 +165,40 @@ document.getElementById('pwConfirmSave')?.addEventListener('click', async () => 
     document.getElementById('pwError').style.display = '';
     return;
   }
-  bootstrap.Modal.getInstance(document.getElementById('pwConfirmModal'))?.hide();
-  await saveFile(pw);
+  document.getElementById('pwError').style.display = 'none';
+
+  const confirmBtn = document.getElementById('pwConfirmSave');
+  confirmBtn.disabled = true;
+  confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('content', editor.getValue());
+  if (EDIT_TOKEN) form.append('edit_token', EDIT_TOKEN);
+  form.append('password', pw);
+
+  try {
+    const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
+    const d = await r.json();
+    if (d.success) {
+      _pwModal?.hide();
+      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger', replaced:'info' };
+      showToast(d.message || 'Saved.', colours[d.status] || 'success');
+    } else {
+      // Keep modal open — show error inline
+      document.getElementById('pwError').textContent = d.error || 'Save failed.';
+      document.getElementById('pwError').style.display = '';
+      document.getElementById('pwInput').value = '';
+      document.getElementById('pwInput').focus();
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+    }
+  } catch(e) {
+    document.getElementById('pwError').textContent = 'Network error — try again.';
+    document.getElementById('pwError').style.display = '';
+    confirmBtn.disabled = false;
+    confirmBtn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+  }
 });
 
 document.getElementById('pwInput')?.addEventListener('keydown', e => {
