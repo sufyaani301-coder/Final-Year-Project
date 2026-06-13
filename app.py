@@ -2186,17 +2186,28 @@ def fim_monitoring():
 
     policies  = MonitoringPolicy.query.filter_by(is_active=True).all()
 
-    # Build pending ActionRequests per file for admin approve/reject buttons
     file_ids = [f.id for f in pagination.items]
-    pending_requests = []
+
+    # Admin: pending requests per file for inline approve/reject
+    pending_by_file = {}
     if current_user.is_admin and file_ids:
-        pending_requests = ActionRequest.query.filter(
+        for ar in ActionRequest.query.filter(
             ActionRequest.file_id.in_(file_ids),
             ActionRequest.status == 'pending',
-        ).all()
-    pending_by_file = {}
-    for ar in pending_requests:
-        pending_by_file.setdefault(ar.file_id, []).append(ar)
+        ).all():
+            pending_by_file.setdefault(ar.file_id, []).append(ar)
+
+    # Non-admin: their own approved (not yet expired/executed) requests per file
+    my_approved_by_file = {}
+    if not current_user.is_admin and file_ids:
+        now_utc = datetime.now(timezone.utc)
+        for ar in ActionRequest.query.filter(
+            ActionRequest.file_id.in_(file_ids),
+            ActionRequest.requested_by_id == current_user.id,
+            ActionRequest.status == 'approved',
+            ActionRequest.expires_at > now_utc,
+        ).all():
+            my_approved_by_file[ar.file_id] = ar
 
     return render_template('fim/monitoring.html',
         files=pagination.items,
@@ -2207,6 +2218,7 @@ def fim_monitoring():
         order=order,
         policies=policies,
         pending_by_file=pending_by_file,
+        my_approved_by_file=my_approved_by_file,
     )
 
 

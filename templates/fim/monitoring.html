@@ -146,6 +146,21 @@
                           onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','edit')">
                     <i class="bi bi-pencil-square"></i>
                   </button>
+                  {# ── Approved action banner ── #}
+                  {% set _my_ar = my_approved_by_file.get(f.id) %}
+                  {% if _my_ar %}
+                  <div class="w-100 mt-1" id="approved-banner-{{ f.uuid }}">
+                    <div class="d-flex align-items-center gap-1 rounded px-2 py-1"
+                         style="background:rgba(25,135,84,.18);border:1px solid rgba(25,135,84,.55);font-size:.75rem">
+                      <i class="bi bi-check-circle-fill text-success"></i>
+                      <span class="flex-grow-1 fw-semibold text-success">Approved — {{ _my_ar.action_label }}</span>
+                      <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.7"
+                              onclick="executeApproved('{{ f.uuid }}','{{ _my_ar.action_type }}','{{ _my_ar.exec_token }}',{{ _my_ar.id }},'{{ f.original_name | e }}')">
+                        <i class="bi bi-play-fill"></i> Execute Now
+                      </button>
+                    </div>
+                  </div>
+                  {% endif %}
                 {% else %}
                   <span class="badge bg-danger d-flex align-items-center gap-1 px-2"
                         title="Your clearance (L{{ current_user.clearance_level }}) is insufficient for this file (L{{ f.classification }})">
@@ -565,8 +580,12 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <p class="small text-muted">Your request was approved. Enter your account password to execute
+        <p class="small text-muted mb-2">Your request was approved. Confirm your password to execute
           <strong id="exec-action-label"></strong>.</p>
+        <div id="exec-rename-field" class="mb-2" style="display:none">
+          <label class="form-label small fw-semibold mb-1">New file name</label>
+          <input type="text" id="execNewName" class="form-control form-control-sm" placeholder="Enter new name"/>
+        </div>
         <input type="password" id="execPassword" class="form-control form-control-sm mb-1"
                placeholder="Your login password" autocomplete="current-password"/>
         <div id="exec-error" class="text-danger small" style="display:none"></div>
@@ -1058,28 +1077,119 @@ document.getElementById('decryptPassword')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('decryptConfirm').click();
 });
 
-// ── SocketIO: change request update notifications ──
+// ── Execute Approved Action ──────────────────────────────────────────────────
+let _execUuid = '', _execAction = '', _execToken = '', _execReqId = 0;
+
+function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName) {
+  const row = document.getElementById('row-' + fileUuid);
+  if (!row) return;
+  // Remove stale banner if present
+  const old = document.getElementById('approved-banner-' + fileUuid);
+  if (old) old.remove();
+  const label = actionType.charAt(0).toUpperCase() + actionType.slice(1);
+  const banner = document.createElement('div');
+  banner.className = 'w-100 mt-1';
+  banner.id = 'approved-banner-' + fileUuid;
+  banner.innerHTML = `<div class="d-flex align-items-center gap-1 rounded px-2 py-1"
+    style="background:rgba(25,135,84,.18);border:1px solid rgba(25,135,84,.55);font-size:.75rem">
+    <i class="bi bi-check-circle-fill text-success"></i>
+    <span class="flex-grow-1 fw-semibold text-success">Approved — ${label}</span>
+    <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.7"
+      onclick="executeApproved('${fileUuid}','${actionType}','${token}',${reqId},'${(fileName||'').replace(/'/g,"\\'")}')">
+      <i class="bi bi-play-fill"></i> Execute Now
+    </button>
+  </div>`;
+  const actionsCell = row.querySelector('td:last-child .d-flex');
+  if (actionsCell) actionsCell.appendChild(banner);
+}
+
+function executeApproved(uuid, action, token, reqId, fileName) {
+  _execUuid = uuid; _execAction = action; _execToken = token; _execReqId = reqId;
+  if (action === 'download') {
+    window.location.href = '/download/' + uuid + '?token=' + encodeURIComponent(token);
+    return;
+  }
+  if (action === 'edit') {
+    window.location.href = '/file/' + uuid + '/edit?token=' + encodeURIComponent(token);
+    return;
+  }
+  // delete or rename → open modal with password
+  document.getElementById('exec-action-label').textContent = action.charAt(0).toUpperCase() + action.slice(1);
+  document.getElementById('execPassword').value = '';
+  document.getElementById('exec-error').style.display = 'none';
+  document.getElementById('execConfirmBtn').disabled = false;
+  const renameField = document.getElementById('exec-rename-field');
+  if (action === 'rename') {
+    document.getElementById('execNewName').value = fileName || '';
+    renameField.style.display = '';
+  } else {
+    renameField.style.display = 'none';
+  }
+  const modal = new bootstrap.Modal(document.getElementById('executeModal'));
+  modal.show();
+  setTimeout(() => document.getElementById('execPassword').focus(), 400);
+}
+
+document.getElementById('execConfirmBtn')?.addEventListener('click', async () => {
+  const pw = document.getElementById('execPassword').value;
+  if (!pw) {
+    document.getElementById('exec-error').textContent = 'Password is required.';
+    document.getElementById('exec-error').style.display = '';
+    return;
+  }
+  document.getElementById('exec-error').style.display = 'none';
+  document.getElementById('execConfirmBtn').disabled = true;
+
+  const fd = new FormData();
+  fd.append('csrf_token', CSRF);
+  fd.append('token', _execToken);
+  fd.append('password', pw);
+
+  let url = '';
+  if (_execAction === 'delete') {
+    url = '/delete/' + _execUuid;
+  } else if (_execAction === 'rename') {
+    const newName = document.getElementById('execNewName').value.trim();
+    if (!newName) {
+      document.getElementById('exec-error').textContent = 'New file name is required.';
+      document.getElementById('exec-error').style.display = '';
+      document.getElementById('execConfirmBtn').disabled = false;
+      return;
+    }
+    fd.append('name', newName);
+    url = '/rename/' + _execUuid;
+  }
+
+  try {
+    const r = await fetch(url, { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+    const d = await r.json();
+    if (d.success) {
+      bootstrap.Modal.getInstance(document.getElementById('executeModal'))?.hide();
+      document.getElementById('approved-banner-' + _execUuid)?.remove();
+      showToast('Action executed successfully.', 'success');
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      document.getElementById('exec-error').textContent = d.error || 'Execution failed.';
+      document.getElementById('exec-error').style.display = '';
+      document.getElementById('execConfirmBtn').disabled = false;
+    }
+  } catch (e) {
+    document.getElementById('exec-error').textContent = 'Network error — try again.';
+    document.getElementById('exec-error').style.display = '';
+    document.getElementById('execConfirmBtn').disabled = false;
+  }
+});
+
+// ── SocketIO: action request notifications ───────────────────────────────────
 if (typeof io !== 'undefined') {
   const _sock = io();
-  _sock.on('change_request_update', data => {
-    const color = data.status === 'approved' ? 'success' : 'danger';
-    const icon  = data.status === 'approved' ? '✓' : '✗';
-    showToast(`${icon} Request #${data.request_id} ${data.status} by ${data.reviewer}.${data.note ? ' Note: ' + data.note : ''}`, color);
-    if (data.status === 'approved') setTimeout(() => location.reload(), 2000);
-  });
-  // Receive approval/rejection from admin
   _sock.on('action_request_update', data => {
     if (data.user_id != {{ current_user.id }}) return;
     if (data.status === 'approved') {
-      sessionStorage.setItem('ar_token_' + data.request_id, data.token);
-      if (data.action_type === 'edit' && data.file_uuid) {
-        showToast(`✅ Edit request approved! Redirecting to editor…`, 'success');
-        setTimeout(() => { window.location.href = `/file/${data.file_uuid}/edit?token=${data.token}`; }, 1500);
-      } else {
-        showToast(`✅ Request #${data.request_id} approved. You have 30 min to execute. Reason: ${data.reason}`, 'success');
-      }
+      showToast(`✅ Your ${data.action_type} request was approved! Check the file row below.`, 'success');
+      _injectApprovedBanner(data.file_uuid, data.action_type, data.token, data.request_id, '');
     } else if (data.status === 'rejected') {
-      showToast(`❌ Request #${data.request_id} rejected. Reason: ${data.reason}`, 'danger');
+      showToast(`❌ ${data.action_type.charAt(0).toUpperCase()+data.action_type.slice(1)} request rejected — ${data.reason}`, 'danger');
     }
   });
 }
