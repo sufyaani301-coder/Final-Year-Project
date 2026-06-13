@@ -126,11 +126,13 @@ limiter = Limiter(
     default_limits=[],
 )
 csrf = CSRFProtect(app)
-def _resend_email(to: str, subject: str, text: str, html: str | None = None) -> bool:
-    """Send one email via Resend. Returns True on success."""
+def _resend_email(to: str, subject: str, text: str, html: str | None = None) -> tuple[bool, str]:
+    """Send one email via Resend. Returns (success, error_message)."""
     api_key = resend.api_key or ''
-    if not api_key or not to:
-        return False
+    if not api_key:
+        return False, 'RESEND_API_KEY is not set in Railway variables.'
+    if not to:
+        return False, 'No recipient address configured (NOTIFICATION_EMAIL).'
     try:
         params = {
             'from':    app.config.get('RESEND_FROM', 'FileVault <onboarding@resend.dev>'),
@@ -142,10 +144,10 @@ def _resend_email(to: str, subject: str, text: str, html: str | None = None) -> 
             params['html'] = html
         resend.Emails.send(params)
         app.logger.info('Resend email sent to %s: %s', to, subject)
-        return True
+        return True, ''
     except Exception as exc:
         app.logger.error('Resend failed to %s: %s', to, exc)
-        return False
+        return False, str(exc)
 
 _enc_key     = os.environ.get('ENCRYPTION_KEY', '')
 _enc_key_raw = base64.urlsafe_b64decode(_enc_key.encode()) if _enc_key else None
@@ -312,7 +314,9 @@ def _notify(subject: str, body: str) -> None:
     import threading
     def _send():
         with app.app_context():
-            _resend_email(recipient, f'[FileVault] {subject}', f'{body}\n\n---\nFileVault · {ts}', html)
+            ok, err = _resend_email(recipient, f'[FileVault] {subject}', f'{body}\n\n---\nFileVault · {ts}', html)
+            if not ok:
+                app.logger.warning('_notify skipped: %s', err)
     threading.Thread(target=_send, daemon=True, name='notify-email').start()
 
 
@@ -415,7 +419,7 @@ def _send_verification_email(user):
     import threading
     def _send():
         with app.app_context():
-            _resend_email(email, '[FileVault] Verify your email', text, html)
+            _resend_email(email, '[FileVault] Verify your email', text, html)  # ignore result
     threading.Thread(target=_send, daemon=True).start()
 
 
@@ -486,7 +490,7 @@ def _send_alert_email(file_rec, alert, severity, title):
     import threading
     def _send():
         with app.app_context():
-            _resend_email(recipient, f'[FileVault] {severity.upper()} ALERT — {fname}', text, html)
+            _resend_email(recipient, f'[FileVault] {severity.upper()} ALERT — {fname}', text, html)  # ignore result
     threading.Thread(target=_send, daemon=True, name='alert-email').start()
 
 
@@ -1656,11 +1660,11 @@ def admin_test_email():
     text = (f'This is a test notification from FileVault.\n\n'
             f'If you received this, Resend email notifications are working correctly.\n\n'
             f'Sent: {ts}\nTo:   {recipient}')
-    ok = _resend_email(recipient, '[FileVault] Test email — Resend check', text)
+    ok, err = _resend_email(recipient, '[FileVault] Test email — Resend check', text)
     if ok:
         return jsonify(success=True,
                        message=f'Test email sent to {recipient} via Resend. Check your inbox (and spam folder).')
-    return jsonify(success=False, error='Resend API call failed — check Railway logs for details.',
+    return jsonify(success=False, error=err or 'Resend API call failed.',
                    config={'RESEND_API_KEY': f'(set, length={len(api_key)})', 'NOTIFICATION_EMAIL': recipient})
 
 

@@ -68,32 +68,39 @@
 
 {% if current_user.is_authenticated and current_user.is_admin %}
 <script>
+function _baseToast(msg, type) {
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;bottom:1.2rem;right:1.2rem;z-index:99999;max-width:380px;'
+    + 'background:' + (type === 'success' ? '#198754' : '#dc3545')
+    + ';color:#fff;padding:14px 18px;border-radius:8px;font-size:.9rem;box-shadow:0 4px 18px rgba(0,0,0,.3);line-height:1.5';
+  box.innerHTML = msg + '<button onclick="this.parentElement.remove()" style="float:right;background:none;border:none;'
+    + 'color:#fff;font-size:1.1rem;line-height:1;margin-left:12px;cursor:pointer">&#x2715;</button>';
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), type === 'success' ? 8000 : 20000);
+}
 async function sendTestEmail() {
   const btn = document.querySelector('[onclick="sendTestEmail()"]');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…'; }
   try {
     const fd = new FormData();
     fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
-    const r  = await fetch('/admin/test-email', { method: 'POST', body: fd });
-    const d  = await r.json();
-    const ok = d.success;
-    // Show result toast
-    const box = document.createElement('div');
-    box.className = `toast align-items-center text-white bg-${ok ? 'success' : 'danger'} border-0 show`;
-    box.style.cssText = 'position:fixed;bottom:1rem;end:1rem;z-index:9999;min-width:320px;right:1rem';
-    box.innerHTML = `<div class="d-flex"><div class="toast-body fw-semibold">
-      <i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'} me-2"></i>
-      ${ok ? d.message : '<strong>Email failed:</strong> ' + (d.error || 'Unknown error') +
-        (d.config ? '<br><small class="opacity-75">Username: ' + d.config.MAIL_USERNAME +
-          ' | Password: ' + d.config.MAIL_PASSWORD +
-          ' | Recipient: ' + d.config.NOTIFICATION_EMAIL + '</small>' : '')}
-    </div>
-    <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.closest('.toast').remove()"></button>
-    </div>`;
-    document.body.appendChild(box);
-    setTimeout(() => box.remove(), ok ? 8000 : 20000);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const r = await fetch('/admin/test-email', { method: 'POST', body: fd, signal: controller.signal });
+    clearTimeout(timeout);
+    const d = await r.json();
+    if (d.success) {
+      _baseToast('✓ ' + d.message, 'success');
+    } else {
+      let msg = '<strong>Email failed:</strong> ' + (d.error || 'Unknown error');
+      if (d.config) {
+        const cfg = Object.entries(d.config).map(([k,v]) => `${k}: ${v}`).join(' | ');
+        msg += '<br><small style="opacity:.8">' + cfg + '</small>';
+      }
+      _baseToast(msg, 'danger');
+    }
   } catch(e) {
-    alert('Network error: ' + e.message);
+    _baseToast('✗ ' + (e.name === 'AbortError' ? 'Request timed out after 15s — check Railway logs.' : 'Network error: ' + e.message), 'danger');
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-envelope-check me-2"></i>Test Email'; }
   }
