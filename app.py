@@ -1600,8 +1600,10 @@ def submit_action_request(file_uuid):
 
     action_type   = request.form.get('action_type', '').strip()
     justification = request.form.get('justification', '').strip()
-    if action_type not in ('download', 'edit', 'rename', 'delete'):
+    if action_type not in ('download', 'edit', 'rename', 'delete', 'replace'):
         return jsonify(success=False, error='Invalid action type.'), 400
+    if action_type == 'replace' and (current_user.clearance_level or 5) > 2:
+        return jsonify(success=False, error='File replacement requests require L1 or L2 clearance.'), 403
     if not justification:
         return jsonify(success=False, error='Justification is required.'), 400
 
@@ -2568,18 +2570,32 @@ def fim_export_report():
 def fim_replace_file(file_uuid):
     """Upload a new version of the file, overwriting it on disk without updating the baseline.
     The next integrity check will detect the hash mismatch and raise a Critical alert."""
-    if not current_user.is_admin:
-        return jsonify(success=False, error='Only admins can replace files.'), 403
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        return jsonify(success=False, error='Forbidden'), 403
     if not file_rec.monitoring_enabled:
         return jsonify(success=False, error='Monitoring disabled for this file'), 400
 
-    # Password confirmation required
-    password = request.form.get('password', '')
-    if not current_user.check_password(password):
-        return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
+    if not current_user.is_admin:
+        # Only L1 / L2 clearance users may replace files (with approval)
+        if (current_user.clearance_level or 5) > 2:
+            return jsonify(success=False, error='File replacement requires L1 or L2 clearance.'), 403
+        if not current_user.can_view_file(file_rec):
+            return jsonify(success=False, error='Your clearance level is insufficient for this file.'), 403
+        token = request.form.get('token', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=file_rec.id,
+            requested_by_id=current_user.id, action_type='replace', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            return jsonify(success=False, error='Admin approval required before replacing this file.'), 403
+        password = request.form.get('password', '')
+        if not current_user.check_password(password):
+            return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
+        ar.status = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
+    else:
+        password = request.form.get('password', '')
+        if not current_user.check_password(password):
+            return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
 
     if 'file' not in request.files or request.files['file'].filename == '':
         return jsonify(success=False, error='No replacement file selected'), 400

@@ -146,6 +146,12 @@
                           onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','edit')">
                     <i class="bi bi-pencil-square"></i>
                   </button>
+                  {% if current_user.clearance_level and current_user.clearance_level <= 2 %}
+                  <button class="btn btn-sm btn-outline-danger" title="Request file replacement (L1/L2 only)"
+                          onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','replace')">
+                    <i class="bi bi-file-earmark-arrow-up"></i>
+                  </button>
+                  {% endif %}
                   {# ── Approved action banner ── #}
                   {% set _my_ar = my_approved_by_file.get(f.id) %}
                   {% if _my_ar %}
@@ -814,7 +820,7 @@ document.getElementById('renameConfirm')?.addEventListener('click', async () => 
 });
 
 // ── Replace file content ──
-let _replaceUuid = null;
+let _replaceUuid = null, _replaceToken = null;
 let _replaceModal = null;
 
 document.getElementById('replaceInput')?.addEventListener('change', function() {
@@ -832,6 +838,8 @@ function _hideReplaceError() {
 
 function openReplace(uuid, fileName) {
   _replaceUuid = uuid;
+  // _replaceToken is set by executeApproved for non-admin; clear it for direct admin use
+  if (arguments.length < 3) _replaceToken = null;
   document.getElementById('replaceFileName').textContent = `"${fileName}"`;
   document.getElementById('replaceChosen').textContent = '';
   document.getElementById('replaceInput').value = '';
@@ -865,6 +873,7 @@ document.getElementById('replaceConfirm')?.addEventListener('click', async () =>
   form.append('csrf_token', CSRF);
   form.append('file', file);
   form.append('password', pw);
+  if (_replaceToken) form.append('token', _replaceToken);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -897,6 +906,8 @@ document.getElementById('replaceConfirm')?.addEventListener('click', async () =>
   if (d.success) {
     const colour = d.status === 'tampered' ? 'danger' : d.status === 'skip' ? 'warning' : 'success';
     showToast(d.message || `Status: ${d.status}`, colour);
+    document.getElementById('approved-banner-' + _replaceUuid)?.remove();
+    _replaceToken = null;
     setTimeout(() => location.reload(), 1800);
   } else {
     showToast(d.error || 'Replace failed.', 'danger');
@@ -1111,6 +1122,12 @@ function executeApproved(uuid, action, token, reqId, fileName) {
   }
   if (action === 'edit') {
     window.location.href = '/file/' + uuid + '/edit?token=' + encodeURIComponent(token);
+    return;
+  }
+  if (action === 'replace') {
+    // Open the replace modal — token will be included in the form submission
+    _replaceToken = token;
+    openReplace(uuid, fileName);
     return;
   }
   // delete or rename → open modal with password

@@ -604,7 +604,8 @@ class ActionRequest(db.Model):
     @property
     def action_label(self):
         return {'download': 'Download', 'edit': 'Edit',
-                'rename': 'Rename', 'delete': 'Delete'}.get(self.action_type, self.action_type.title())
+                'rename': 'Rename', 'delete': 'Delete',
+                'replace': 'Replace'}.get(self.action_type, self.action_type.title())
 
     @property
     def status_badge(self):
