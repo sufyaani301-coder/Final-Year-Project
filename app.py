@@ -815,6 +815,14 @@ def auth_register():
             log_activity('register', f'New account: {email}', user_id=user.id)
             db.session.commit()
             _send_verification_email(user)
+            _notify(
+                f'New Account Registered — {user.full_name}',
+                f'Name:      {user.full_name}\n'
+                f'Email:     {email}\n'
+                f'Role:      {"Admin (first user)" if is_first else "User"}\n'
+                f'IP:        {_get_real_ip()}\n\n'
+                f'Log in to FileVault to set their clearance level.',
+            )
             login_user(user)
             session['_logged_in_this_session'] = True
             flash('Account created! Check your email to verify your address.', 'success')
