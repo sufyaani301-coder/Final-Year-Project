@@ -27,7 +27,7 @@ from flask_login import (
 from flask_socketio import SocketIO
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from flask_mail import Mail, Message
+import resend
 from flask_migrate import Migrate
 from cryptography.fernet import Fernet
 import pyotp
@@ -91,16 +91,13 @@ app.config['WTF_CSRF_TIME_LIMIT'] = 3600
 app.config['SESSION_PERMANENT'] = False          # session dies when browser closes
 app.config['REMEMBER_COOKIE_DURATION'] = 0       # no "remember me" persistence
 
-# Mail (Gmail SMTP)
-app.config['MAIL_SERVER']         = 'smtp.gmail.com'
-app.config['MAIL_PORT']           = 587
-app.config['MAIL_USE_TLS']        = True
-app.config['MAIL_USERNAME']       = os.environ.get('MAIL_USERNAME', '')
-app.config['MAIL_PASSWORD']       = os.environ.get('MAIL_PASSWORD', '')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME', 'noreply@filevault.local')
-# Single address that receives ALL alerts and file-event notifications
-app.config['NOTIFICATION_EMAIL']  = os.environ.get('NOTIFICATION_EMAIL', '') or \
-                                     os.environ.get('MAIL_USERNAME', '')
+# Resend email
+resend.api_key = os.environ.get('RESEND_API_KEY', '')
+# Address all notifications are delivered to (admin inbox)
+app.config['NOTIFICATION_EMAIL'] = os.environ.get('NOTIFICATION_EMAIL', '')
+# "From" shown in outgoing emails — use your verified Resend domain, or leave
+# as onboarding@resend.dev for the free tier (sends to your own email only)
+app.config['RESEND_FROM'] = os.environ.get('RESEND_FROM', 'FileVault <onboarding@resend.dev>')
 
 # WebAuthn / FIDO2
 WEBAUTHN_RP_ID     = os.environ.get('WEBAUTHN_RP_ID',     'localhost')
@@ -129,7 +126,26 @@ limiter = Limiter(
     default_limits=[],
 )
 csrf = CSRFProtect(app)
-mail = Mail(app)
+def _resend_email(to: str, subject: str, text: str, html: str | None = None) -> bool:
+    """Send one email via Resend. Returns True on success."""
+    api_key = resend.api_key or ''
+    if not api_key or not to:
+        return False
+    try:
+        params = {
+            'from':    app.config.get('RESEND_FROM', 'FileVault <onboarding@resend.dev>'),
+            'to':      [to],
+            'subject': subject,
+            'text':    text,
+        }
+        if html:
+            params['html'] = html
+        resend.Emails.send(params)
+        app.logger.info('Resend email sent to %s: %s', to, subject)
+        return True
+    except Exception as exc:
+        app.logger.error('Resend failed to %s: %s', to, exc)
+        return False
 
 _enc_key     = os.environ.get('ENCRYPTION_KEY', '')
 _enc_key_raw = base64.urlsafe_b64decode(_enc_key.encode()) if _enc_key else None
@@ -276,25 +292,12 @@ def broadcast_event(event_type, message, filename='', user_name=''):
 
 
 def _notify(subject: str, body: str) -> None:
-    """Send a notification email to NOTIFICATION_EMAIL in a background thread.
-    Returns immediately — never blocks or raises."""
+    """Send a notification email to NOTIFICATION_EMAIL via Resend (background thread)."""
     recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
-    username  = app.config.get('MAIL_USERNAME',       '').strip()
-    password  = app.config.get('MAIL_PASSWORD',       '').strip()
-    # Only send if credentials are configured (not placeholder)
-    if not recipient or not username or not password or 'app_password' in password.lower():
+    if not recipient or not resend.api_key:
         return
-    import threading
-    def _send():
-        with app.app_context():
-            try:
-                ts  = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
-                msg = Message(
-                    subject    = f'[FileVault] {subject}',
-                    recipients = [recipient],
-                )
-                msg.body = f'{body}\n\n---\nFileVault · {ts}'
-                msg.html = f'''
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    html = f'''
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
             background:#f4f6f9;padding:24px;border-radius:10px">
   <div style="background:#0d1117;padding:14px 24px;border-radius:8px 8px 0 0;text-align:center">
@@ -306,10 +309,10 @@ def _notify(subject: str, body: str) -> None:
     <p style="margin-top:20px;font-size:11px;color:#aaa">{ts}</p>
   </div>
 </div>'''
-                mail.send(msg)
-                app.logger.info('Notification sent to %s: %s', recipient, subject)
-            except Exception as exc:
-                app.logger.error('_notify failed: %s', exc)
+    import threading
+    def _send():
+        with app.app_context():
+            _resend_email(recipient, f'[FileVault] {subject}', f'{body}\n\n---\nFileVault · {ts}', html)
     threading.Thread(target=_send, daemon=True, name='notify-email').start()
 
 
@@ -391,20 +394,28 @@ def _send_verification_email(user):
     token = secrets.token_urlsafe(32)
     user.verification_token = token
     db.session.commit()
-    link = url_for('verify_email', token=token, _external=True)
-    msg = Message('Verify your FileVault email', recipients=[user.email])
-    msg.body = (
-        f'Hi {user.full_name},\n\n'
-        f'Click here to verify your email address:\n{link}\n\n'
-        f'If you did not register for FileVault, ignore this email.'
-    )
+    link  = url_for('verify_email', token=token, _external=True)
+    name  = user.full_name
+    email = user.email
+    text  = (f'Hi {name},\n\nClick here to verify your FileVault email:\n{link}\n\n'
+             f'If you did not register, ignore this email.')
+    html  = f'''
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:24px;border-radius:10px">
+  <div style="background:#0d1117;padding:14px 24px;border-radius:8px 8px 0 0;text-align:center">
+    <span style="color:white;font-size:18px;font-weight:bold">&#128274; FileVault</span>
+  </div>
+  <div style="background:white;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e0e0e0">
+    <h3 style="margin:0 0 12px;color:#0d1117">Verify your email</h3>
+    <p style="color:#333;font-size:14px">Hi {name},<br><br>Click the button below to verify your FileVault account.</p>
+    <a href="{link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#0d6efd;color:white;
+       border-radius:6px;text-decoration:none;font-weight:bold">Verify Email</a>
+    <p style="font-size:12px;color:#aaa">If you did not register, ignore this email.</p>
+  </div>
+</div>'''
     import threading
     def _send():
         with app.app_context():
-            try:
-                mail.send(msg)
-            except Exception as exc:
-                app.logger.error('Verification email failed for %s: %s', user.email, exc)
+            _resend_email(email, '[FileVault] Verify your email', text, html)
     threading.Thread(target=_send, daemon=True).start()
 
 
@@ -439,33 +450,20 @@ def _apply_type_filter(q, type_filter):
 # FIM helpers — defined here so db/models are always in scope (no circular import)
 # ---------------------------------------------------------------------------
 def _send_alert_email(file_rec, alert, severity, title):
-    """Send a FIM integrity alert email in a background thread."""
+    """Send a FIM integrity alert email via Resend (background thread)."""
     recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
-    password  = app.config.get('MAIL_PASSWORD', '').strip()
-    if not recipient or not password or 'app_password' in password.lower():
+    if not recipient or not resend.api_key:
         return
-    # Snapshot the values we need before entering the thread
-    fname    = file_rec.original_name
-    ts       = alert.raised_at.strftime('%Y-%m-%d %H:%M:%S UTC')
-    sev_col  = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
-    import threading
-    def _send():
-        with app.app_context():
-            try:
-                msg = Message(
-                    subject    = f'[FileVault] {severity.upper()} ALERT — {fname}',
-                    recipients = [recipient],
-                )
-                msg.body = (
-                    f'FileVault Integrity Alert\n'
-                    f'-------------------------\n'
-                    f'Severity : {severity.upper()}\n'
-                    f'File     : {fname}\n'
-                    f'Alert    : {title}\n'
-                    f'Detected : {ts}\n\n'
-                    f'Log in to FileVault to review and close this alert.'
-                )
-                msg.html = f'''
+    fname   = file_rec.original_name
+    ts      = alert.raised_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+    sev_col = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
+    text = (f'FileVault Integrity Alert\n'
+            f'Severity : {severity.upper()}\n'
+            f'File     : {fname}\n'
+            f'Alert    : {title}\n'
+            f'Detected : {ts}\n\n'
+            f'Log in to FileVault to review and close this alert.')
+    html = f'''
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#f4f6f9;padding:24px;border-radius:10px">
   <div style="background:#0d1117;padding:18px 24px;border-radius:8px 8px 0 0;text-align:center">
     <span style="color:white;font-size:20px;font-weight:bold">&#128274; FileVault</span>
@@ -481,14 +479,14 @@ def _send_alert_email(file_rec, alert, severity, title):
       <tr><td style="padding:6px 0;color:#555">Detected</td><td>{ts}</td></tr>
     </table>
     <p style="margin-top:24px;font-size:12px;color:#999;border-top:1px solid #eee;padding-top:12px">
-      Log in to FileVault → Alerts Center to review and close this alert.
+      Log in to FileVault to review and close this alert.
     </p>
   </div>
 </div>'''
-                mail.send(msg)
-                app.logger.info('Alert email sent to %s for "%s"', recipient, fname)
-            except Exception as exc:
-                app.logger.error('Alert email failed to %s: %s', recipient, exc)
+    import threading
+    def _send():
+        with app.app_context():
+            _resend_email(recipient, f'[FileVault] {severity.upper()} ALERT — {fname}', text, html)
     threading.Thread(target=_send, daemon=True, name='alert-email').start()
 
 
@@ -1645,47 +1643,25 @@ def admin_test_email():
     if not current_user.is_admin:
         abort(403)
     recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
-    username  = app.config.get('MAIL_USERNAME',       '').strip()
-    password  = app.config.get('MAIL_PASSWORD',       '').strip()
+    api_key   = resend.api_key or ''
 
-    # Diagnose configuration issues before even trying
-    issues = []
-    if not username:
-        issues.append('MAIL_USERNAME is not set.')
-    if not password:
-        issues.append('MAIL_PASSWORD is not set.')
-    elif 'app_password' in password.lower():
-        issues.append('MAIL_PASSWORD still contains the placeholder text. Replace it with your real 16-character Gmail App Password.')
+    if not api_key:
+        return jsonify(success=False, error='RESEND_API_KEY is not set in Railway variables.',
+                       config={'RESEND_API_KEY': '(empty)', 'NOTIFICATION_EMAIL': recipient or '(empty)'})
     if not recipient:
-        issues.append('NOTIFICATION_EMAIL is not set.')
-    if issues:
-        return jsonify(success=False, error=' | '.join(issues),
-                       config={'MAIL_USERNAME': username or '(empty)',
-                               'MAIL_PASSWORD': '(placeholder)' if 'app_password' in password.lower() else ('(set, length=%d)' % len(password)),
-                               'NOTIFICATION_EMAIL': recipient or '(empty)'})
+        return jsonify(success=False, error='NOTIFICATION_EMAIL is not set in Railway variables.',
+                       config={'RESEND_API_KEY': f'(set, length={len(api_key)})', 'NOTIFICATION_EMAIL': '(empty)'})
 
-    try:
-        from datetime import datetime, timezone as tz
-        msg = Message(
-            subject    = '[FileVault] Test email — configuration check',
-            recipients = [recipient],
-        )
-        msg.body = (
-            f'This is a test notification from FileVault.\n\n'
-            f'If you received this, email notifications are working correctly.\n\n'
-            f'Sent: {datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}\n'
-            f'From: {username}\n'
-            f'To:   {recipient}'
-        )
-        mail.send(msg)
+    ts   = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    text = (f'This is a test notification from FileVault.\n\n'
+            f'If you received this, Resend email notifications are working correctly.\n\n'
+            f'Sent: {ts}\nTo:   {recipient}')
+    ok = _resend_email(recipient, '[FileVault] Test email — Resend check', text)
+    if ok:
         return jsonify(success=True,
-                       message=f'Test email sent to {recipient}. Check your inbox (and spam folder).')
-    except Exception as exc:
-        return jsonify(success=False,
-                       error=str(exc),
-                       config={'MAIL_USERNAME': username,
-                               'MAIL_PASSWORD': f'(set, length={len(password)})',
-                               'NOTIFICATION_EMAIL': recipient})
+                       message=f'Test email sent to {recipient} via Resend. Check your inbox (and spam folder).')
+    return jsonify(success=False, error='Resend API call failed — check Railway logs for details.',
+                   config={'RESEND_API_KEY': f'(set, length={len(api_key)})', 'NOTIFICATION_EMAIL': recipient})
 
 
 @app.route('/admin/action-requests')
