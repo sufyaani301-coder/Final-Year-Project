@@ -16,13 +16,6 @@
               data-bs-toggle="modal" data-bs-target="#uploadModal">
         <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload</span>
       </button>
-      {% else %}
-      {% set cl = current_user.clearance_level %}
-      <span class="badge align-self-center px-2 py-1"
-        style="font-size:.68rem;background:{% if cl==1 %}#7c0000{% elif cl==2 %}#b54a00
-          {% elif cl==3 %}#856404{% elif cl==4 %}#084298{% else %}#155724{% endif %}">
-        L{{ cl }} {{ current_user.clearance_label }}
-      </span>
       {% endif %}
       <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
       <div class="dropdown flex-shrink-0">
@@ -100,13 +93,6 @@
                     <a href="{{ url_for('fim_file_status', file_id=f.id) }}" class="text-decoration-none">{{ f.original_name }}</a>
                   </div>
                   <div class="d-flex align-items-center gap-1 mt-1">
-                    <span class="badge px-1 py-0"
-                      style="font-size:.58rem;font-weight:700;
-                        background:{% if f.classification==1 %}#7c0000{% elif f.classification==2 %}#b54a00
-                        {% elif f.classification==3 %}#856404{% elif f.classification==4 %}#084298
-                        {% else %}#155724{% endif %}">
-                      L{{ f.classification }} {{ f.classification_label }}
-                    </span>
                     <span class="text-muted small">{{ f.size_human }} · {{ f.uploaded_at.strftime('%b %d, %Y') }}</span>
                   </div>
                 </div>
@@ -118,8 +104,7 @@
             </td>
             <td>
               {% if f.alert_count > 0 %}
-              <a href="{{ url_for('fim_alerts', file_id=f.id) }}"
-                 class="badge bg-danger text-decoration-none">{{ f.alert_count }}</a>
+              <span class="badge bg-danger">{{ f.alert_count }}</span>
               {% else %}<span class="text-muted">0</span>{% endif %}
             </td>
             <td class="text-muted small">{{ f.policy.name if f.policy else '—' }}</td>
@@ -242,9 +227,10 @@
         <p class="mt-3 text-muted">
           {% if query %}No files match "{{ query }}".
           {% elif status_filter %}No files with status "{{ status_filter }}".
-          {% else %}No files uploaded yet. Click <strong>Upload</strong> to get started.{% endif %}
+          {% elif current_user.is_admin %}No files uploaded yet. Click <strong>Upload</strong> to get started.
+          {% else %}No files are available yet.{% endif %}
         </p>
-        {% if not query and not status_filter %}
+        {% if not query and not status_filter and current_user.is_admin %}
         <button class="btn btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#uploadModal">
           <i class="bi bi-cloud-upload me-2"></i>Upload a file
         </button>
@@ -256,6 +242,7 @@
   </div>
 </div>
 
+{% if current_user.is_admin %}
 <!-- ── Upload modal ── -->
 <div class="modal fade" id="uploadModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -280,17 +267,6 @@
             <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
           </div>
         </div>
-        <div class="mt-3">
-          <label class="form-label fw-semibold small" for="classificationSelect">File Classification <span class="text-danger">*</span></label>
-          <select class="form-select form-select-sm" id="classificationSelect" name="classification">
-            <option value="5" selected>5 — UNCLASSIFIED (all users with clearance 5+)</option>
-            <option value="4">4 — RESTRICTED (clearance 4 or higher)</option>
-            <option value="3">3 — CONFIDENTIAL (clearance 3 or higher)</option>
-            <option value="2">2 — SECRET (clearance 2 or higher)</option>
-            <option value="1">1 — TOP SECRET (clearance 1 only)</option>
-          </select>
-          <div class="form-text">Users must have a clearance level ≤ the file's classification to view it.</div>
-        </div>
         <div class="mt-2"><small class="text-muted">Allowed: images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small></div>
       </div>
       <div class="modal-footer border-0 pt-0">
@@ -300,6 +276,8 @@
     </div>
   </div>
 </div>
+
+{% endif %}{# end is_admin upload modal #}
 
 <!-- Rename modal -->
 <div class="modal fade" id="renameModal" tabindex="-1" aria-labelledby="renameModalLabel">
@@ -393,26 +371,6 @@
   </div>
 </div>
 
-<!-- Reset baseline confirm modal -->
-<div class="modal fade" id="resetBaselineModal" tabindex="-1">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2 text-warning"></i>Reset Baseline</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <p class="small text-muted mb-2">Accept the current on-disk file as the new trusted baseline for <strong id="resetFileName"></strong>? This will close any open alerts.</p>
-        <input type="text" id="resetNote" class="form-control form-control-sm" placeholder="Optional note (reason for reset)"/>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-sm btn-warning" id="resetBaselineConfirm">Reset</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Share modal -->
 <div class="modal fade" id="shareModal" tabindex="-1" aria-labelledby="shareModalLabel">
   <div class="modal-dialog modal-dialog-centered">
@@ -468,6 +426,26 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reset baseline confirm modal -->
+<div class="modal fade" id="resetBaselineModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2 text-warning"></i>Reset Baseline</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Accept the current on-disk file as the new trusted baseline for <strong id="resetFileName"></strong>? This will close any open alerts.</p>
+        <input type="text" id="resetNote" class="form-control form-control-sm" placeholder="Optional note (reason for reset)"/>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning" id="resetBaselineConfirm">Reset</button>
       </div>
     </div>
   </div>
@@ -571,6 +549,7 @@
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
+{% if current_user.is_admin %}
 // ── Drag & drop upload ──
 const dz = document.getElementById('dropZone');
 const fi = document.getElementById('fileInput');
@@ -596,7 +575,7 @@ async function startUpload() {
   const form = new FormData();
   form.append('file', file);
   form.append('csrf_token', CSRF);
-  form.append('classification', document.getElementById('classificationSelect').value);
+  form.append('classification', '5');
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '{{ url_for("upload_file") }}');
   xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
@@ -621,6 +600,7 @@ async function startUpload() {
   xhr.onerror = () => { btn.disabled = false; showToast('Network error.', 'danger'); };
   xhr.send(form);
 }
+{% endif %}
 
 // ── Capture initial baseline (PENDING files) ──
 async function captureBaseline(fileUuid, btn) {

@@ -42,21 +42,16 @@
         </div>
       </div>
 
-      <!-- FIM warning -->
-      {% if file.current_baseline %}
-      <div class="alert alert-warning py-2 px-3 mb-3 small flex-shrink-0" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-1"></i>
-        <strong>Integrity monitoring active.</strong>
-        Saving changes will modify the file on disk. The integrity check will detect a hash mismatch and raise a <strong>Tampered</strong> alert.
-        Admins can reset the baseline afterward to accept the new content.
-      </div>
-      {% else %}
+      <!-- FIM info -->
       <div class="alert alert-info py-2 px-3 mb-3 small flex-shrink-0" role="alert">
-        <i class="bi bi-info-circle-fill me-1"></i>
-        No baseline captured yet — saving will not raise an alert.
-        After saving, click <strong>Capture Baseline</strong> on the file detail page to start monitoring.
+        <i class="bi bi-shield-check me-1"></i>
+        {% if file.current_baseline %}
+        <strong>Integrity monitoring active.</strong>
+        Saving through this editor automatically updates the baseline — no false tampering alerts will be raised.
+        {% else %}
+        No baseline captured yet. Saving here will not affect FIM status.
+        {% endif %}
       </div>
-      {% endif %}
 
       <!-- CodeMirror editor -->
       <div class="chart-card flex-grow-1 d-flex flex-column p-0" style="overflow:hidden;min-height:300px">

@@ -99,9 +99,8 @@
         <!-- Open alerts -->
         <div class="col-md-7">
           <div class="chart-card h-100">
-            <div class="chart-card-title d-flex justify-content-between">
+            <div class="chart-card-title">
               <span><i class="bi bi-bell me-1"></i>Alert History</span>
-              <a href="{{ url_for('fim_alerts', file_id=file.id) }}" class="btn btn-sm btn-outline-primary btn-xs">All alerts</a>
             </div>
             {% if alerts %}
             <div class="table-responsive">

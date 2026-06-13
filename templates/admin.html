@@ -119,8 +119,6 @@
                   {% set role = u.role if u.role else ('super_admin' if u.is_admin else 'user') %}
                   <span class="badge role-badge-{{ role }} px-2 py-1" style="font-size:.72rem">
                     {% if role == 'super_admin' %}<i class="bi bi-shield-fill-check me-1"></i>Super Admin
-                    {% elif role == 'analyst'   %}<i class="bi bi-bar-chart-fill me-1"></i>Analyst
-                    {% elif role == 'auditor'   %}<i class="bi bi-eye-fill me-1"></i>Auditor
                     {% else                     %}<i class="bi bi-person me-1"></i>User{% endif %}
                   </span>
                 </td>
@@ -133,8 +131,6 @@
                       <select name="role" class="form-select form-select-sm" style="width:auto;font-size:.75rem"
                               onchange="this.form.submit()" title="Change role">
                         <option value="user"        {% if u.role=='user'        %}selected{% endif %}>User</option>
-                        <option value="auditor"     {% if u.role=='auditor'     %}selected{% endif %}>Auditor</option>
-                        <option value="analyst"     {% if u.role=='analyst'     %}selected{% endif %}>Analyst</option>
                         <option value="super_admin" {% if u.role=='super_admin' %}selected{% endif %}>Super Admin</option>
                       </select>
                     </form>

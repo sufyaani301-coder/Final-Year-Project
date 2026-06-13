@@ -98,6 +98,9 @@ app.config['MAIL_USE_TLS']        = True
 app.config['MAIL_USERNAME']       = os.environ.get('MAIL_USERNAME', '')
 app.config['MAIL_PASSWORD']       = os.environ.get('MAIL_PASSWORD', '')
 app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME', 'noreply@filevault.local')
+# Single address that receives ALL alerts and file-event notifications
+app.config['NOTIFICATION_EMAIL']  = os.environ.get('NOTIFICATION_EMAIL', '') or \
+                                     os.environ.get('MAIL_USERNAME', '')
 
 # WebAuthn / FIDO2
 WEBAUTHN_RP_ID     = os.environ.get('WEBAUTHN_RP_ID',     'localhost')
@@ -272,6 +275,44 @@ def broadcast_event(event_type, message, filename='', user_name=''):
     })
 
 
+def _notify(subject: str, body: str) -> None:
+    """Send a notification email to NOTIFICATION_EMAIL in a background thread.
+    Returns immediately — never blocks or raises."""
+    recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
+    username  = app.config.get('MAIL_USERNAME',       '').strip()
+    password  = app.config.get('MAIL_PASSWORD',       '').strip()
+    # Only send if credentials are configured (not placeholder)
+    if not recipient or not username or not password or 'app_password' in password.lower():
+        return
+    import threading
+    def _send():
+        with app.app_context():
+            try:
+                ts  = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                msg = Message(
+                    subject    = f'[FileVault] {subject}',
+                    recipients = [recipient],
+                )
+                msg.body = f'{body}\n\n---\nFileVault · {ts}'
+                msg.html = f'''
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
+            background:#f4f6f9;padding:24px;border-radius:10px">
+  <div style="background:#0d1117;padding:14px 24px;border-radius:8px 8px 0 0;text-align:center">
+    <span style="color:white;font-size:18px;font-weight:bold">&#128274; FileVault</span>
+  </div>
+  <div style="background:white;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e0e0e0">
+    <h3 style="margin:0 0 12px;color:#0d1117">{subject}</h3>
+    <p style="white-space:pre-line;color:#333;font-size:14px">{body}</p>
+    <p style="margin-top:20px;font-size:11px;color:#aaa">{ts}</p>
+  </div>
+</div>'''
+                mail.send(msg)
+                app.logger.info('Notification sent to %s: %s', recipient, subject)
+            except Exception as exc:
+                app.logger.error('_notify failed: %s', exc)
+    threading.Thread(target=_send, daemon=True, name='notify-email').start()
+
+
 def _log_file_access(action, file_rec=None, outcome='success', details=None):
     """Write a FileAccessLog entry and emit a real-time SocketIO event to admin monitors."""
     entry = FileAccessLog(
@@ -285,16 +326,19 @@ def _log_file_access(action, file_rec=None, outcome='success', details=None):
         details    = details,
     )
     db.session.add(entry)
-    # Real-time push to admin event monitor
-    socketio.emit('access_event', {
-        'action':    action,
-        'outcome':   outcome,
-        'file':      file_rec.original_name if file_rec else '—',
-        'user':      current_user.full_name if current_user.is_authenticated else 'anonymous',
-        'ip':        request.remote_addr or '',
-        'details':   details or '',
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
-    }, room='admin_monitor')
+    # Real-time push to admin event monitor (fire-and-forget — never crash the caller)
+    try:
+        socketio.emit('access_event', {
+            'action':    action,
+            'outcome':   outcome,
+            'file':      file_rec.original_name if file_rec else '—',
+            'user':      current_user.full_name if current_user.is_authenticated else 'anonymous',
+            'ip':        request.remote_addr or '',
+            'details':   details or '',
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+        }, room='admin_monitor')
+    except Exception as _sock_err:
+        app.logger.debug('access_event emit failed: %s', _sock_err)
 
 
 def _storage_type_breakdown(files):
@@ -395,60 +439,57 @@ def _apply_type_filter(q, type_filter):
 # FIM helpers — defined here so db/models are always in scope (no circular import)
 # ---------------------------------------------------------------------------
 def _send_alert_email(file_rec, alert, severity, title):
-    """Send an email notification to the file owner when an integrity alert is raised."""
-    if not app.config.get('MAIL_USERNAME'):
+    """Send a FIM integrity alert email in a background thread."""
+    recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
+    password  = app.config.get('MAIL_PASSWORD', '').strip()
+    if not recipient or not password or 'app_password' in password.lower():
         return
-    owner = db.session.get(User, file_rec.user_id)
-    if not owner:
-        return
-    if getattr(owner, 'email_alerts_enabled', None) is False:
-        return
-    recipient = owner.alert_email or owner.email
-    severity_colour = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
-    try:
-        msg = Message(
-            subject=f'[FileVault] {severity.upper()} Alert — {file_rec.original_name}',
-            recipients=[recipient],
-        )
-        msg.body = (
-            f'FileVault Integrity Alert\n'
-            f'-------------------------\n'
-            f'Severity : {severity.upper()}\n'
-            f'File     : {file_rec.original_name}\n'
-            f'Alert    : {title}\n'
-            f'Detected : {alert.raised_at.strftime("%Y-%m-%d %H:%M:%S UTC")}\n\n'
-            f'Log in to FileVault to review and close this alert.\n\n'
-            f'To stop receiving these emails, go to Settings → Notifications in your profile.'
-        )
-        msg.html = f'''
+    # Snapshot the values we need before entering the thread
+    fname    = file_rec.original_name
+    ts       = alert.raised_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+    sev_col  = {'critical': '#dc3545', 'high': '#fd7e14', 'medium': '#ffc107'}.get(severity, '#6c757d')
+    import threading
+    def _send():
+        with app.app_context():
+            try:
+                msg = Message(
+                    subject    = f'[FileVault] {severity.upper()} ALERT — {fname}',
+                    recipients = [recipient],
+                )
+                msg.body = (
+                    f'FileVault Integrity Alert\n'
+                    f'-------------------------\n'
+                    f'Severity : {severity.upper()}\n'
+                    f'File     : {fname}\n'
+                    f'Alert    : {title}\n'
+                    f'Detected : {ts}\n\n'
+                    f'Log in to FileVault to review and close this alert.'
+                )
+                msg.html = f'''
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#f4f6f9;padding:24px;border-radius:10px">
   <div style="background:#0d1117;padding:18px 24px;border-radius:8px 8px 0 0;text-align:center">
     <span style="color:white;font-size:20px;font-weight:bold">&#128274; FileVault</span>
   </div>
   <div style="background:white;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e0e0e0">
-    <div style="background:{severity_colour};color:white;padding:10px 16px;border-radius:6px;font-weight:bold;margin-bottom:16px">
+    <div style="background:{sev_col};color:white;padding:10px 16px;border-radius:6px;font-weight:bold;margin-bottom:16px">
       {severity.upper()} INTEGRITY ALERT
     </div>
     <h3 style="margin:0 0 16px">{title}</h3>
     <table style="width:100%;font-size:14px;border-collapse:collapse">
-      <tr><td style="padding:6px 0;color:#555;width:90px">File</td><td><strong>{file_rec.original_name}</strong></td></tr>
-      <tr><td style="padding:6px 0;color:#555">Severity</td><td><strong style="color:{severity_colour}">{severity.upper()}</strong></td></tr>
-      <tr><td style="padding:6px 0;color:#555">Detected</td><td>{alert.raised_at.strftime("%Y-%m-%d %H:%M:%S UTC")}</td></tr>
+      <tr><td style="padding:6px 0;color:#555;width:90px">File</td><td><strong>{fname}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#555">Severity</td><td><strong style="color:{sev_col}">{severity.upper()}</strong></td></tr>
+      <tr><td style="padding:6px 0;color:#555">Detected</td><td>{ts}</td></tr>
     </table>
-    <div style="margin-top:20px">
-      <a href="{url_for('fim_alerts', _external=True)}"
-         style="background:#0d6efd;color:white;padding:10px 22px;border-radius:6px;text-decoration:none;font-size:14px">
-        View Alert in FileVault
-      </a>
-    </div>
     <p style="margin-top:24px;font-size:12px;color:#999;border-top:1px solid #eee;padding-top:12px">
-      To stop receiving these emails, go to <strong>Settings → Notifications</strong> in your FileVault profile.
+      Log in to FileVault → Alerts Center to review and close this alert.
     </p>
   </div>
 </div>'''
-        mail.send(msg)
-    except Exception as exc:
-        app.logger.error('Alert email failed to %s: %s', recipient, exc)
+                mail.send(msg)
+                app.logger.info('Alert email sent to %s for "%s"', recipient, fname)
+            except Exception as exc:
+                app.logger.error('Alert email failed to %s: %s', recipient, exc)
+    threading.Thread(target=_send, daemon=True, name='alert-email').start()
 
 
 def _fim_capture_baseline(file_rec, user, reason='upload'):
@@ -656,21 +697,11 @@ def _fim_nav_context():
             file_count   = File.query.count()
             pending_reqs = ActionRequest.query.filter_by(status='pending').count()
         else:
-            shared_fids = db.session.query(FileShare.file_id).filter_by(
-                shared_with_id=current_user.id
-            ).subquery()
-            accessible = db.session.query(File.id).filter(
-                File.id.in_(shared_fids),
-                File.classification >= current_user.clearance_level,
-            ).subquery()
-            open_count   = IntegrityAlert.query.filter(
-                IntegrityAlert.status == 'open',
-                IntegrityAlert.file_id.in_(accessible),
-            ).count()
-            file_count   = db.session.query(File.id).filter(File.id.in_(accessible)).count()
+            open_count   = IntegrityAlert.query.filter_by(status='open').count()
+            file_count   = File.query.count()
             pending_reqs = ActionRequest.query.filter_by(
                 requested_by_id=current_user.id, status='approved'
-            ).count()  # approved but not yet executed
+            ).count()
         return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
                 'pending_action_requests': pending_reqs}
     except Exception:
@@ -1009,11 +1040,10 @@ def profile():
 
         return redirect(url_for('profile'))
 
-    my_files     = File.query.filter_by(user_id=current_user.id).all()
-    total_size   = sum(f.size for f in my_files)
-    quota        = app.config['STORAGE_QUOTA_BYTES']
-    quota_pct    = min(100, round(total_size / quota * 100, 1))
-    shared_count = sum(1 for f in my_files if f.is_shared)
+    my_files   = File.query.filter_by(user_id=current_user.id).all()
+    total_size = sum(f.size for f in my_files)
+    quota      = app.config['STORAGE_QUOTA_BYTES']
+    quota_pct  = min(100, round(total_size / quota * 100, 1))
     created = current_user.created_at
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
@@ -1024,7 +1054,6 @@ def profile():
         total_size=format_bytes(total_size),
         quota_pct=quota_pct,
         quota_max=format_bytes(quota),
-        shared_count=shared_count,
         days_joined=days_joined,
     )
 
@@ -1046,16 +1075,8 @@ def dashboard():
         file_q  = File.query
         alert_q = IntegrityAlert.query
     else:
-        # Non-admins see only files shared with them AND within their clearance
-        shared_fids = db.session.query(FileShare.file_id).filter_by(
-            shared_with_id=current_user.id
-        ).subquery()
-        accessible = db.session.query(File.id).filter(
-            File.id.in_(shared_fids),
-            File.classification >= current_user.clearance_level,
-        ).subquery()
-        file_q  = File.query.filter(File.id.in_(accessible))
-        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(accessible))
+        file_q  = File.query
+        alert_q = IntegrityAlert.query
 
     monitored = file_q.filter_by(monitoring_enabled=True)
 
@@ -1086,11 +1107,7 @@ def dashboard():
         trend_labels.append(day.strftime('%a'))
         trend_counts.append(c)
 
-    if is_admin:
-        chk_q = IntegrityCheck.query
-    else:
-        uid_sub2  = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
-        chk_q     = IntegrityCheck.query.filter(IntegrityCheck.file_id.in_(uid_sub2))
+    chk_q = IntegrityCheck.query
     recent_checks = chk_q.order_by(IntegrityCheck.checked_at.desc()).limit(8).all()
 
     return render_template('dashboard.html',
@@ -1179,6 +1196,14 @@ def upload_file():
 
     broadcast_event('upload', f'{current_user.full_name} uploaded "{original_name}"',
                     original_name, current_user.full_name)
+    _notify(
+        f'File Uploaded — {original_name}',
+        f'File:           {original_name}\n'
+        f'Size:           {format_bytes(size)}\n'
+        f'Classification: {rec.classification_label}\n'
+        f'Uploaded by:    {current_user.full_name}\n'
+        f'IP:             {_get_real_ip()}',
+    )
 
     if is_ajax:
         return jsonify(success=True, file=rec.to_dict())
@@ -1190,10 +1215,6 @@ def upload_file():
 @login_required
 def download_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if not current_user.can_view_file(rec):
-        _log_file_access('download', rec, 'denied', 'Insufficient clearance level')
-        db.session.commit()
-        abort(403)
     # Admins bypass the request workflow; all others need an approved ActionRequest
     if not current_user.is_admin:
         token = request.args.get('token', '')
@@ -1225,10 +1246,6 @@ def download_file(file_uuid):
 @limiter.limit('5 per minute')
 def decrypt_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if not current_user.can_view_file(rec):
-        _log_file_access('download', rec, 'denied', 'Insufficient clearance level')
-        db.session.commit()
-        return jsonify(success=False, error='Access denied: insufficient clearance level.'), 403
     # Admins can decrypt directly; others need an approved ActionRequest token
     if not current_user.is_admin:
         token = request.form.get('token', '')
@@ -1276,9 +1293,10 @@ def decrypt_file(file_uuid):
 @limiter.limit('10 per minute')
 def preview_auth(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    shared_ids = [s.shared_with_id for s in rec.shares]
-    if rec.user_id != current_user.id and current_user.id not in shared_ids:
-        return jsonify(success=False, error='Access denied.'), 403
+    if not current_user.is_admin and rec.user_id != current_user.id:
+        _log_file_access('preview', rec, 'denied', 'Preview attempt without admin approval')
+        db.session.commit()
+        return jsonify(success=False, error='Admin approval required to access this file.'), 403
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     if not password or not current_user.check_password(password):
@@ -1297,9 +1315,6 @@ def preview_file(file_uuid):
     if not session.pop(f'pv_{file_uuid}', False):
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    shared_ids = [s.shared_with_id for s in rec.shares]
-    if rec.user_id != current_user.id and current_user.id not in shared_ids:
-        abort(403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
                                mimetype=rec.mimetype or 'application/octet-stream')
 
@@ -1358,6 +1373,12 @@ def delete_file(file_uuid):
     _log_file_access('delete', None, 'success', f'File "{name}" permanently deleted')
     broadcast_event('delete', f'{current_user.full_name} deleted "{name}"',
                     name, current_user.full_name)
+    _notify(
+        f'File Deleted — {name}',
+        f'File:      {name}\n'
+        f'Deleted by: {current_user.full_name}\n'
+        f'IP:         {_get_real_ip()}',
+    )
     if is_ajax:
         return jsonify(success=True)
     flash(f'"{name}" deleted.', 'success')
@@ -1445,6 +1466,13 @@ def rename_file(file_uuid):
             app.logger.error('Rename alert failed: %s', _ren_exc)
 
     db.session.commit()
+    _notify(
+        f'File Renamed — {old_name}',
+        f'Old name:   {old_name}\n'
+        f'New name:   {rec.original_name}\n'
+        f'Renamed by: {current_user.full_name}\n'
+        f'IP:         {_get_real_ip()}',
+    )
     return jsonify(success=True, name=rec.original_name, alert_generated=alert_generated)
 
 
@@ -1475,6 +1503,15 @@ def share_file(file_uuid):
     broadcast_event('share',
                     f'Admin granted "{rec.original_name}" access to {target.full_name}',
                     rec.original_name, current_user.full_name)
+    _notify(
+        f'File Shared — {rec.original_name}',
+        f'File:             {rec.original_name}\n'
+        f'Classification:   {rec.classification_label}\n'
+        f'Shared with:      {target.full_name} ({target.email})\n'
+        f'Their clearance:  L{target.clearance_level} {target.clearance_label}\n'
+        f'Shared by:        {current_user.full_name}\n'
+        f'IP:               {_get_real_ip()}',
+    )
     flash(f'Access granted to {target.full_name}.', 'success')
     return redirect(url_for('dashboard'))
 
@@ -1489,8 +1526,6 @@ def share_file(file_uuid):
 def submit_action_request(file_uuid):
     """User requests permission for download/edit/rename/delete. Admin must approve."""
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if not current_user.can_view_file(rec):
-        return jsonify(success=False, error='You do not have clearance to access this file.'), 403
 
     action_type   = request.form.get('action_type', '').strip()
     justification = request.form.get('justification', '').strip()
@@ -1529,6 +1564,56 @@ def submit_action_request(file_uuid):
     })
     return jsonify(success=True, request_id=ar.id,
                    message='Request submitted. You will be notified when the administrator reviews it.')
+
+
+@app.route('/admin/test-email', methods=['POST'])
+@login_required
+def admin_test_email():
+    """Send a test email synchronously and return the exact result."""
+    if not current_user.is_admin:
+        abort(403)
+    recipient = app.config.get('NOTIFICATION_EMAIL', '').strip()
+    username  = app.config.get('MAIL_USERNAME',       '').strip()
+    password  = app.config.get('MAIL_PASSWORD',       '').strip()
+
+    # Diagnose configuration issues before even trying
+    issues = []
+    if not username:
+        issues.append('MAIL_USERNAME is not set.')
+    if not password:
+        issues.append('MAIL_PASSWORD is not set.')
+    elif 'app_password' in password.lower():
+        issues.append('MAIL_PASSWORD still contains the placeholder text. Replace it with your real 16-character Gmail App Password.')
+    if not recipient:
+        issues.append('NOTIFICATION_EMAIL is not set.')
+    if issues:
+        return jsonify(success=False, error=' | '.join(issues),
+                       config={'MAIL_USERNAME': username or '(empty)',
+                               'MAIL_PASSWORD': '(placeholder)' if 'app_password' in password.lower() else ('(set, length=%d)' % len(password)),
+                               'NOTIFICATION_EMAIL': recipient or '(empty)'})
+
+    try:
+        from datetime import datetime, timezone as tz
+        msg = Message(
+            subject    = '[FileVault] Test email — configuration check',
+            recipients = [recipient],
+        )
+        msg.body = (
+            f'This is a test notification from FileVault.\n\n'
+            f'If you received this, email notifications are working correctly.\n\n'
+            f'Sent: {datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}\n'
+            f'From: {username}\n'
+            f'To:   {recipient}'
+        )
+        mail.send(msg)
+        return jsonify(success=True,
+                       message=f'Test email sent to {recipient}. Check your inbox (and spam folder).')
+    except Exception as exc:
+        return jsonify(success=False,
+                       error=str(exc),
+                       config={'MAIL_USERNAME': username,
+                               'MAIL_PASSWORD': f'(set, length={len(password)})',
+                               'NOTIFICATION_EMAIL': recipient})
 
 
 @app.route('/admin/action-requests')
@@ -1907,7 +1992,7 @@ def change_role(user_id):
         return redirect(url_for('admin_panel'))
     user = db.session.get(User, user_id) or abort(404)
     new_role = request.form.get('role', 'user')
-    if new_role not in ('super_admin', 'analyst', 'auditor', 'user'):
+    if new_role not in ('super_admin', 'user'):
         flash('Invalid role.', 'danger')
         return redirect(url_for('admin_panel'))
     user.role = new_role
@@ -1943,8 +2028,6 @@ def set_clearance(user_id):
 @login_required
 def verify_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if rec.user_id != current_user.id and current_user.id not in [s.shared_with_id for s in rec.shares]:
-        abort(403)
     if not rec.file_hash:
         return jsonify(intact=None, error='No hash stored for this file (uploaded before integrity feature was added).')
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
@@ -2004,15 +2087,7 @@ def fim_monitoring():
     if current_user.is_admin:
         q = File.query
     else:
-        # Non-admins see only files at or below their clearance level
-        # AND that have been explicitly shared with them by admin
-        shared_fids = db.session.query(FileShare.file_id).filter_by(
-            shared_with_id=current_user.id
-        ).subquery()
-        q = File.query.filter(
-            File.id.in_(shared_fids),
-            File.classification >= current_user.clearance_level,
-        )
+        q = File.query
     if query:
         q = q.filter(File.original_name.ilike(f'%{query}%'))
     if status:
@@ -2028,7 +2103,6 @@ def fim_monitoring():
     q = q.order_by(sort_col.asc() if order == 'asc' else sort_col.desc())
     pagination = q.paginate(page=page, per_page=PER_PAGE, error_out=False)
 
-    all_users = User.query.filter(User.id != current_user.id).all()
     policies  = MonitoringPolicy.query.filter_by(is_active=True).all()
 
     return render_template('fim/monitoring.html',
@@ -2038,7 +2112,6 @@ def fim_monitoring():
         status_filter=status,
         sort=sort,
         order=order,
-        all_users=all_users,
         policies=policies,
     )
 
@@ -2050,8 +2123,6 @@ def fim_monitoring():
 @login_required
 def fim_file_status(file_id):
     file_rec = File.query.get_or_404(file_id)
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        abort(403)
 
     page   = request.args.get('page', 1, type=int)
     checks = file_rec.checks.paginate(page=page, per_page=20, error_out=False)
@@ -2073,8 +2144,6 @@ def fim_file_status(file_id):
 @limiter.limit('30 per minute')
 def fim_manual_check(file_uuid):
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        return jsonify(success=False, error='Forbidden'), 403
 
     try:
         result = _fim_check_file(file_rec,
@@ -2156,47 +2225,6 @@ def fim_reset_baseline(file_uuid):
         return jsonify(success=False, error=f'Database error: {exc}'), 500
 
 
-# ---------------------------------------------------------------------------
-# FIM — Alerts centre
-# ---------------------------------------------------------------------------
-@app.route('/fim/alerts')
-@login_required
-def fim_alerts():
-    sev    = request.args.get('severity', '')
-    status = request.args.get('status', 'open')
-    fid    = request.args.get('file_id', '', type=str)
-    page   = request.args.get('page', 1, type=int)
-
-    if current_user.is_admin:
-        q = IntegrityAlert.query
-    else:
-        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
-        q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
-
-    if status:
-        q = q.filter_by(status=status)
-    if sev:
-        q = q.filter_by(severity=sev)
-    if fid:
-        try:
-            q = q.filter_by(file_id=int(fid))
-        except ValueError:
-            pass
-
-    q = q.order_by(IntegrityAlert.raised_at.desc())
-    pagination = q.paginate(page=page, per_page=25, error_out=False)
-
-    analysts = User.query.filter(User.role.in_(['super_admin', 'analyst'])).all()
-
-    return render_template('fim/alerts.html',
-        alerts=pagination.items,
-        pagination=pagination,
-        sev_filter=sev,
-        status_filter=status,
-        file_id_filter=fid,
-        analysts=analysts,
-    )
-
 
 # ---------------------------------------------------------------------------
 # FIM — Alert actions (acknowledge / resolve / false-positive / escalate /
@@ -2204,16 +2232,14 @@ def fim_alerts():
 # ---------------------------------------------------------------------------
 def _get_alert_for_action(alert_id):
     alert = IntegrityAlert.query.get_or_404(alert_id)
-    if not current_user.is_admin:
-        file_owner = File.query.get(alert.file_id)
-        if not file_owner or file_owner.user_id != current_user.id:
-            abort(403)
     return alert
 
 
 @app.route('/fim/alerts/<int:alert_id>/acknowledge', methods=['POST'])
 @login_required
 def fim_alert_acknowledge(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
     alert = _get_alert_for_action(alert_id)
     if alert.status not in ('open', 'escalated'):
         return jsonify(success=False, error='Alert is already closed'), 400
@@ -2225,6 +2251,8 @@ def fim_alert_acknowledge(alert_id):
 @app.route('/fim/alerts/<int:alert_id>/resolve', methods=['POST'])
 @login_required
 def fim_alert_resolve(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
     alert       = _get_alert_for_action(alert_id)
     res_type    = request.form.get('resolution_type', 'investigated')
     note        = request.form.get('note', '').strip()
@@ -2236,6 +2264,8 @@ def fim_alert_resolve(alert_id):
 @app.route('/fim/alerts/<int:alert_id>/false-positive', methods=['POST'])
 @login_required
 def fim_alert_false_positive(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
     alert = _get_alert_for_action(alert_id)
     note  = request.form.get('note', '').strip()
     alert.mark_false_positive(current_user, note)
@@ -2246,6 +2276,8 @@ def fim_alert_false_positive(alert_id):
 @app.route('/fim/alerts/<int:alert_id>/escalate', methods=['POST'])
 @login_required
 def fim_alert_escalate(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
     alert     = _get_alert_for_action(alert_id)
     to_uid    = request.form.get('to_user_id', type=int)
     to_user   = db.session.get(User, to_uid) if to_uid else None
@@ -2274,6 +2306,8 @@ def fim_alert_assign(alert_id):
 @app.route('/fim/alerts/<int:alert_id>/comment', methods=['POST'])
 @login_required
 def fim_alert_comment(alert_id):
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Admin required'), 403
     alert   = _get_alert_for_action(alert_id)
     text    = request.form.get('comment', '').strip()
     is_int  = request.form.get('internal', '0') == '1'
@@ -2316,10 +2350,9 @@ def fim_analytics_data():
         check_q = IntegrityCheck.query
         file_q  = File.query
     else:
-        uid_sub = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
-        alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(uid_sub))
-        check_q = IntegrityCheck.query.filter(IntegrityCheck.file_id.in_(uid_sub))
-        file_q  = File.query.filter_by(user_id=current_user.id)
+        alert_q = IntegrityAlert.query
+        check_q = IntegrityCheck.query
+        file_q  = File.query
 
     now = datetime.now(timezone.utc)
 
@@ -2525,8 +2558,8 @@ def fim_export_report():
 def fim_replace_file(file_uuid):
     """Upload a new version of the file, overwriting it on disk without updating the baseline.
     The next integrity check will detect the hash mismatch and raise a Critical alert."""
-    if current_user.role in ('analyst', 'auditor'):
-        return jsonify(success=False, error='Your role does not permit file replacement.'), 403
+    if not current_user.is_admin:
+        return jsonify(success=False, error='Only admins can replace files.'), 403
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
         return jsonify(success=False, error='Forbidden'), 403
@@ -2584,7 +2617,7 @@ def fim_replace_file(file_uuid):
 @app.route('/file/<file_uuid>/edit', methods=['GET'])
 @login_required
 def edit_file_page(file_uuid):
-    if current_user.role in ('analyst', 'auditor'):
+    if not current_user.is_admin:
         abort(403)
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if file_rec.user_id != current_user.id and not current_user.is_admin:
@@ -2646,34 +2679,32 @@ def edit_file_save(file_uuid):
     except Exception as exc:
         return jsonify(success=False, error=f'Could not write file: {exc}'), 500
 
-    check_status  = 'skip'
-    check_message = 'File saved. No baseline exists — click Capture Baseline to start monitoring.'
+    check_status  = 'ok'
+    check_message = 'File saved successfully.'
     try:
-        result = _fim_check_file(file_rec,
-            triggered_by='manual',
-            triggered_by_user_id=current_user.id,
-        )
-        check_status = result['status']
-        if check_status not in ('ok', 'skip'):
-            _fim_raise_alert(file_rec, result)
-        check_message = {
-            'ok':       'File saved. Content matches baseline (same content as baseline).',
-            'tampered': '⚠ File saved. Hash mismatch — integrity alert raised.',
-            'missing':  '⚠ File saved but integrity check reports file missing.',
-            'error':    'File saved. Integrity check encountered an error.',
-            'skip':     'File saved. No baseline — click Capture Baseline to start monitoring.',
-        }.get(check_status, f'File saved. Status: {check_status}')
+        # Authorized browser edit — update baseline so FIM doesn't flag it as tampering
+        _fim_capture_baseline(file_rec, current_user, reason='edit')
         log_activity('upload', f'Edited "{file_rec.original_name}" in browser ({format_bytes(len(raw_data))})')
+        _log_file_access('edit', file_rec, 'success',
+                         f'Inline edit saved ({format_bytes(len(raw_data))})')
         db.session.commit()
+        check_message = 'File saved. Baseline updated to reflect authorized edit.'
+        _notify(
+            f'File Modified — {file_rec.original_name}',
+            f'File:        {file_rec.original_name}\n'
+            f'New size:    {format_bytes(len(raw_data))}\n'
+            f'Edited by:   {current_user.full_name}\n'
+            f'IP:          {_get_real_ip()}',
+        )
     except Exception as exc:
         db.session.rollback()
-        app.logger.error('edit_file_save check error: %s', exc)
+        app.logger.error('edit_file_save post-write error: %s', exc)
         try:
             log_activity('upload', f'Edited "{file_rec.original_name}" in browser')
             db.session.commit()
         except Exception:
             db.session.rollback()
-        check_message = f'File saved. Integrity check failed: {exc}'
+        check_message = 'File saved on disk. Baseline update failed — run an integrity check to resync.'
 
     return jsonify(success=True, status=check_status, message=check_message)
 

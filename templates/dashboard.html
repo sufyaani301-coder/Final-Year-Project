@@ -15,9 +15,11 @@
         <i class="bi bi-list fs-4"></i>
       </button>
       <span class="fw-semibold flex-grow-1" style="font-size:1rem">Security Overview</span>
+      {% if current_user.is_admin %}
       <a href="{{ url_for('fim_monitoring') }}" class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0">
         <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload File</span>
       </a>
+      {% endif %}
       <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
         <i class="bi bi-moon-fill"></i>
       </button>
@@ -122,12 +124,12 @@
       </div>
 
       <!-- ── Open alerts table ── -->
+      {% if current_user.is_admin %}
       <div class="row g-3 mb-4">
         <div class="col-lg-8">
           <div class="chart-card">
             <div class="chart-card-title d-flex justify-content-between align-items-center">
               <span><i class="bi bi-bell me-1"></i>Open Alerts</span>
-              <a href="{{ url_for('fim_alerts') }}" class="btn btn-sm btn-outline-primary">View all</a>
             </div>
             {% if open_alerts %}
             <div class="table-responsive">
@@ -185,18 +187,7 @@
           </div>
         </div>
       </div>
-
-      <!-- ── Severity breakdown pills ── -->
-      {% if stats.open_alerts > 0 %}
-      <div class="d-flex flex-wrap gap-2 mb-2">
-        {% for sev, count in sev_counts.items() %}{% if count > 0 %}
-        <a href="{{ url_for('fim_alerts', severity=sev) }}"
-           class="badge text-decoration-none {{ {'critical':'bg-danger','high':'badge-high','medium':'badge-warning text-dark','low':'badge-info text-dark','info':'bg-secondary'}.get(sev,'bg-secondary') }} px-3 py-2 fs-7">
-          {{ count }} {{ sev|upper }}
-        </a>
-        {% endif %}{% endfor %}
-      </div>
-      {% endif %}
+      {% endif %}{# end is_admin #}
 
     </div><!-- /content-area -->
   </div><!-- /main-content -->

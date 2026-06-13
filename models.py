@@ -98,17 +98,8 @@ class User(UserMixin, db.Model):
         return self.role == 'super_admin'
 
     @property
-    def is_analyst(self):
-        return self.role in ('super_admin', 'analyst')
-
-    @property
-    def is_auditor(self):
-        return self.role in ('super_admin', 'analyst', 'auditor')
-
-    @property
     def role_label(self):
-        return {'super_admin': 'Super Admin', 'analyst': 'Analyst',
-                'auditor': 'Auditor', 'user': 'User'}.get(self.role, 'User')
+        return {'super_admin': 'Super Admin', 'user': 'User'}.get(self.role, 'User')
 
     @property
     def clearance_label(self):

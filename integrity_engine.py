@@ -396,10 +396,8 @@ def _send_alert_email_async(alert, file_rec, flask_app):
         with flask_app.app_context():
             try:
                 from app import User, mail
-                analysts = User.query.filter(
-                    User.role.in_(['super_admin', 'analyst']),
-                ).all()
-                recipients = [u.email for u in analysts if u.email]
+                admins = User.query.filter(User.role == 'super_admin').all()
+                recipients = [u.email for u in admins if u.email]
                 owner = User.query.get(file_rec.user_id)
                 if owner and owner.email not in recipients:
                     recipients.append(owner.email)

@@ -65,5 +65,40 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 {% block scripts %}{% endblock %}
+
+{% if current_user.is_authenticated and current_user.is_admin %}
+<script>
+async function sendTestEmail() {
+  const btn = document.querySelector('[onclick="sendTestEmail()"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…'; }
+  try {
+    const fd = new FormData();
+    fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+    const r  = await fetch('/admin/test-email', { method: 'POST', body: fd });
+    const d  = await r.json();
+    const ok = d.success;
+    // Show result toast
+    const box = document.createElement('div');
+    box.className = `toast align-items-center text-white bg-${ok ? 'success' : 'danger'} border-0 show`;
+    box.style.cssText = 'position:fixed;bottom:1rem;end:1rem;z-index:9999;min-width:320px;right:1rem';
+    box.innerHTML = `<div class="d-flex"><div class="toast-body fw-semibold">
+      <i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'} me-2"></i>
+      ${ok ? d.message : '<strong>Email failed:</strong> ' + (d.error || 'Unknown error') +
+        (d.config ? '<br><small class="opacity-75">Username: ' + d.config.MAIL_USERNAME +
+          ' | Password: ' + d.config.MAIL_PASSWORD +
+          ' | Recipient: ' + d.config.NOTIFICATION_EMAIL + '</small>' : '')}
+    </div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.closest('.toast').remove()"></button>
+    </div>`;
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), ok ? 8000 : 20000);
+  } catch(e) {
+    alert('Network error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-envelope-check me-2"></i>Test Email'; }
+  }
+}
+</script>
+{% endif %}
 </body>
 </html>
