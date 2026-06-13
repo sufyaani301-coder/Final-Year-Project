@@ -92,9 +92,10 @@
 </style>
 
 <script>
-const CSRF     = document.querySelector('meta[name="csrf-token"]')?.content || '';
-const FILE_UUID = '{{ file.uuid }}';
-const CM_MODE   = '{{ cm_mode }}';
+const CSRF      = document.querySelector('meta[name="csrf-token"]')?.content || '';
+const FILE_UUID  = '{{ file.uuid }}';
+const CM_MODE    = '{{ cm_mode }}';
+const EDIT_TOKEN = '{{ edit_token }}';
 
 const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
 const editor = CodeMirror(document.getElementById('editorWrap'), {
@@ -139,6 +140,7 @@ async function saveFile() {
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('content', editor.getValue());
+  if (EDIT_TOKEN) form.append('edit_token', EDIT_TOKEN);
 
   try {
     const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });

@@ -112,26 +112,41 @@
               <div class="d-flex gap-1 flex-wrap">
 
               {% if not current_user.is_admin %}
-                {# ── Non-admin: view + integrity checks + request approval for actions ── #}
+                {# ── Non-admin: view + clearance indicator + request buttons ── #}
+                {% set _can_access = current_user.can_view_file(f) %}
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
                    class="btn btn-sm btn-outline-secondary" title="View details">
                   <i class="bi bi-eye"></i>
                 </a>
-                {% if f.current_status == 'pending' %}
-                <button class="btn btn-sm btn-outline-success" title="Capture baseline"
-                        onclick="captureBaseline('{{ f.uuid }}', this)">
-                  <i class="bi bi-database-add"></i>
-                </button>
+                {% if _can_access %}
+                  {% if f.current_status == 'pending' %}
+                  <button class="btn btn-sm btn-outline-success" title="Capture baseline"
+                          onclick="captureBaseline('{{ f.uuid }}', this)">
+                    <i class="bi bi-database-add"></i>
+                  </button>
+                  {% else %}
+                  <button class="btn btn-sm btn-outline-info" title="Run integrity check"
+                          onclick="runCheck('{{ f.uuid }}', this)">
+                    <i class="bi bi-shield-check"></i>
+                  </button>
+                  {% endif %}
+                  <button class="btn btn-sm btn-outline-primary" title="Request download"
+                          onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','download')">
+                    <i class="bi bi-download"></i>
+                  </button>
+                  {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
+                  {% if _fext in ('txt','csv','json','xml') %}
+                  <button class="btn btn-sm btn-outline-warning" title="Request edit"
+                          onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','edit')">
+                    <i class="bi bi-pencil-square"></i>
+                  </button>
+                  {% endif %}
                 {% else %}
-                <button class="btn btn-sm btn-outline-info" title="Run integrity check"
-                        onclick="runCheck('{{ f.uuid }}', this)">
-                  <i class="bi bi-shield-check"></i>
-                </button>
+                  <span class="badge bg-danger d-flex align-items-center gap-1 px-2"
+                        title="Your clearance (L{{ current_user.clearance_level }}) is insufficient for this file (L{{ f.classification }})">
+                    <i class="bi bi-lock-fill"></i> L{{ f.classification }} Restricted
+                  </span>
                 {% endif %}
-                <button class="btn btn-sm btn-outline-primary" title="Request download"
-                        onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','download')">
-                  <i class="bi bi-send"></i>
-                </button>
 
               {% else %}
                 {# ── Admin: full direct controls ── #}
@@ -966,9 +981,13 @@ if (typeof io !== 'undefined') {
   _sock.on('action_request_update', data => {
     if (data.user_id != {{ current_user.id }}) return;
     if (data.status === 'approved') {
-      // Store token for execution
       sessionStorage.setItem('ar_token_' + data.request_id, data.token);
-      showToast(`✅ Request #${data.request_id} approved by admin. You have 30 min to execute. Reason: ${data.reason}`, 'success');
+      if (data.action_type === 'edit' && data.file_uuid) {
+        showToast(`✅ Edit request approved! Redirecting to editor…`, 'success');
+        setTimeout(() => { window.location.href = `/file/${data.file_uuid}/edit?token=${data.token}`; }, 1500);
+      } else {
+        showToast(`✅ Request #${data.request_id} approved. You have 30 min to execute. Reason: ${data.reason}`, 'success');
+      }
     } else if (data.status === 'rejected') {
       showToast(`❌ Request #${data.request_id} rejected. Reason: ${data.reason}`, 'danger');
     }

@@ -1215,8 +1215,23 @@ def upload_file():
 @login_required
 def download_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    # Admins bypass the request workflow; all others need an approved ActionRequest
+    # Admins bypass all checks; non-admins need clearance then an approved ActionRequest
     if not current_user.is_admin:
+        if not current_user.can_view_file(rec):
+            _log_file_access('download', rec, 'denied',
+                             f'Clearance L{current_user.clearance_level} insufficient for L{rec.classification} file')
+            db.session.commit()
+            _notify(
+                f'Access Denied — {rec.original_name}',
+                f'User:            {current_user.full_name} ({current_user.email})\n'
+                f'File:            {rec.original_name}\n'
+                f'Action:          Download\n'
+                f'User clearance:  L{current_user.clearance_level} {current_user.clearance_label}\n'
+                f'File class.:     L{rec.classification} {rec.classification_label}\n'
+                f'Reason:          Clearance level insufficient',
+            )
+            flash(f'Access denied — your clearance (L{current_user.clearance_level}) is below the required level for this file.', 'danger')
+            return redirect(url_for('fim_monitoring'))
         token = request.args.get('token', '')
         ar = ActionRequest.query.filter_by(
             exec_token=token, file_id=rec.id,
@@ -1246,8 +1261,22 @@ def download_file(file_uuid):
 @limiter.limit('5 per minute')
 def decrypt_file(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    # Admins can decrypt directly; others need an approved ActionRequest token
+    # Admins can decrypt directly; non-admins need clearance then an approved ActionRequest token
     if not current_user.is_admin:
+        if not current_user.can_view_file(rec):
+            _log_file_access('download', rec, 'denied',
+                             f'Clearance L{current_user.clearance_level} insufficient for L{rec.classification} file')
+            db.session.commit()
+            _notify(
+                f'Access Denied — {rec.original_name}',
+                f'User:            {current_user.full_name} ({current_user.email})\n'
+                f'File:            {rec.original_name}\n'
+                f'Action:          Decrypt & Download\n'
+                f'User clearance:  L{current_user.clearance_level} {current_user.clearance_label}\n'
+                f'File class.:     L{rec.classification} {rec.classification_label}\n'
+                f'Reason:          Clearance level insufficient',
+            )
+            return jsonify(success=False, error=f'Access denied — your clearance (L{current_user.clearance_level}) is below the required level for this file.'), 403
         token = request.form.get('token', '')
         ar = ActionRequest.query.filter_by(
             exec_token=token, file_id=rec.id,
@@ -1293,10 +1322,21 @@ def decrypt_file(file_uuid):
 @limiter.limit('10 per minute')
 def preview_auth(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if not current_user.is_admin and rec.user_id != current_user.id:
-        _log_file_access('preview', rec, 'denied', 'Preview attempt without admin approval')
-        db.session.commit()
-        return jsonify(success=False, error='Admin approval required to access this file.'), 403
+    if not current_user.is_admin:
+        if not current_user.can_view_file(rec):
+            _log_file_access('preview', rec, 'denied',
+                             f'Clearance L{current_user.clearance_level} insufficient for L{rec.classification} file')
+            db.session.commit()
+            _notify(
+                f'Access Denied — {rec.original_name}',
+                f'User:            {current_user.full_name} ({current_user.email})\n'
+                f'File:            {rec.original_name}\n'
+                f'Action:          Preview\n'
+                f'User clearance:  L{current_user.clearance_level} {current_user.clearance_label}\n'
+                f'File class.:     L{rec.classification} {rec.classification_label}\n'
+                f'Reason:          Clearance level insufficient',
+            )
+            return jsonify(success=False, error=f'Access denied — your clearance (L{current_user.clearance_level}) is below the required level for this file.'), 403
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     if not password or not current_user.check_password(password):
@@ -1527,6 +1567,12 @@ def submit_action_request(file_uuid):
     """User requests permission for download/edit/rename/delete. Admin must approve."""
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
 
+    # Non-admins must have sufficient clearance to request any action
+    if not current_user.is_admin and not current_user.can_view_file(rec):
+        return jsonify(success=False,
+                       error=f'Access denied — your clearance level (L{current_user.clearance_level} {current_user.clearance_label}) '
+                             f'is insufficient for this file (L{rec.classification} {rec.classification_label}).'), 403
+
     action_type   = request.form.get('action_type', '').strip()
     justification = request.form.get('justification', '').strip()
     if action_type not in ('download', 'edit', 'rename', 'delete'):
@@ -1553,7 +1599,7 @@ def submit_action_request(file_uuid):
                      f'Requested {action_type} — justification: {justification[:200]}')
     db.session.commit()
 
-    # Notify admin in real time
+    # Notify admin via SocketIO (real-time) and email
     socketio.emit('action_request_new', {
         'request_id':  ar.id,
         'action':      action_type,
@@ -1562,6 +1608,16 @@ def submit_action_request(file_uuid):
         'clearance':   current_user.clearance_level,
         'timestamp':   ar.requested_at.strftime('%H:%M:%S'),
     })
+    _notify(
+        f'New {action_type.title()} Request — {rec.original_name}',
+        f'User:             {current_user.full_name} ({current_user.email})\n'
+        f'File:             {rec.original_name}\n'
+        f'Action:           {action_type.title()}\n'
+        f'User clearance:   L{current_user.clearance_level} {current_user.clearance_label}\n'
+        f'File class.:      L{rec.classification} {rec.classification_label}\n'
+        f'Justification:    {justification[:500]}\n\n'
+        f'Log in to FileVault to approve or reject this request.',
+    )
     return jsonify(success=True, request_id=ar.id,
                    message='Request submitted. You will be notified when the administrator reviews it.')
 
@@ -1653,12 +1709,14 @@ def admin_approve_action_request(req_id):
 
     # Notify user
     socketio.emit('action_request_update', {
-        'request_id': ar.id,
-        'status':     'approved',
-        'reason':     ar.admin_reason,
-        'token':      ar.exec_token,
-        'expires_at': ar.expires_at.strftime('%H:%M:%S UTC'),
-        'user_id':    ar.requested_by_id,
+        'request_id':  ar.id,
+        'status':      'approved',
+        'reason':      ar.admin_reason,
+        'token':       ar.exec_token,
+        'expires_at':  ar.expires_at.strftime('%H:%M:%S UTC'),
+        'user_id':     ar.requested_by_id,
+        'action_type': ar.action_type,
+        'file_uuid':   ar.file.uuid if ar.file else '',
     })
     return jsonify(success=True, message='Request approved. User notified with execution token.')
 
@@ -2617,11 +2675,16 @@ def fim_replace_file(file_uuid):
 @app.route('/file/<file_uuid>/edit', methods=['GET'])
 @login_required
 def edit_file_page(file_uuid):
-    if not current_user.is_admin:
-        abort(403)
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        abort(403)
+    if not current_user.is_admin:
+        token = request.args.get('token', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=file_rec.id,
+            requested_by_id=current_user.id, action_type='edit', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            flash('You need an approved edit request to access this page.', 'warning')
+            return redirect(url_for('fim_monitoring'))
 
     ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
     if ext not in EDITABLE_EXTENSIONS:
@@ -2648,16 +2711,25 @@ def edit_file_page(file_uuid):
         return redirect(url_for('fim_file_status', file_id=file_rec.id))
 
     cm_mode = {'json': 'application/json', 'xml': 'application/xml'}.get(ext, 'text/plain')
+    edit_token = request.args.get('token', '')
     return render_template('fim/edit_file.html',
-        file=file_rec, content=content, cm_mode=cm_mode, ext=ext)
+        file=file_rec, content=content, cm_mode=cm_mode, ext=ext, edit_token=edit_token)
 
 
 @app.route('/file/<file_uuid>/edit', methods=['POST'])
 @login_required
 def edit_file_save(file_uuid):
     file_rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    if file_rec.user_id != current_user.id and not current_user.is_admin:
-        return jsonify(success=False, error='Forbidden'), 403
+    if not current_user.is_admin:
+        token = request.form.get('edit_token', '') or request.args.get('token', '')
+        ar = ActionRequest.query.filter_by(
+            exec_token=token, file_id=file_rec.id,
+            requested_by_id=current_user.id, action_type='edit', status='approved',
+        ).first()
+        if not ar or ar.is_expired:
+            return jsonify(success=False, error='No approved edit request found or token expired.'), 403
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
 
     ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
     if ext not in EDITABLE_EXTENSIONS:
