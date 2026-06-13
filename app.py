@@ -705,7 +705,7 @@ def _fim_nav_context():
         return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
                 'pending_action_requests': pending_reqs}
     except Exception:
-        return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_change_requests': 0}
+        return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_action_requests': 0}
 
 
 # ---------------------------------------------------------------------------

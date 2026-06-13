@@ -218,7 +218,7 @@ document.getElementById('confirm-approve-btn').onclick = async () => {
   const reason = document.getElementById('approve-reason').value.trim();
   const fd = new FormData();
   fd.append('reason', reason);
-  fd.append('csrf_token', document.querySelector('[name=csrf_token]')?.value || '');
+  fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
   const res = await fetch(`/admin/action-requests/${currentReqId}/approve`, {method:'POST', body:fd});
   const data = await res.json();
   if (data.success) { location.reload(); }
@@ -230,7 +230,7 @@ document.getElementById('confirm-reject-btn').onclick = async () => {
   if (!reason) { alert('Rejection reason is required.'); return; }
   const fd = new FormData();
   fd.append('reason', reason);
-  fd.append('csrf_token', document.querySelector('[name=csrf_token]')?.value || '');
+  fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
   const res = await fetch(`/admin/action-requests/${currentReqId}/reject`, {method:'POST', body:fd});
   const data = await res.json();
   if (data.success) { location.reload(); }
