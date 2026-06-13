@@ -173,6 +173,36 @@ _login_attempts: dict = defaultdict(lambda: {'count': 0, 'locked_until': None})
 _LOCKOUT_THRESHOLD = 5
 _LOCKOUT_MINUTES   = 15
 
+# Per-user failed password attempts (for action confirmation modals)
+_pw_attempts: dict = defaultdict(lambda: {'count': 0, 'locked_until': None})
+_PW_LOCK_THRESHOLD = 5
+_PW_LOCK_MINUTES   = 15
+
+def _check_pw_locked(user_id: int) -> tuple[bool, str]:
+    rec = _pw_attempts[user_id]
+    if rec['locked_until'] and datetime.now(timezone.utc) < rec['locked_until']:
+        remaining = int((rec['locked_until'] - datetime.now(timezone.utc)).total_seconds())
+        mins, secs = divmod(remaining, 60)
+        return True, f'Too many failed attempts. Try again in {mins}m {secs}s.'
+    return False, ''
+
+def _record_pw_fail(user_id: int, user_name: str, user_email: str, action_context: str = '') -> bool:
+    rec = _pw_attempts[user_id]
+    rec['count'] += 1
+    if rec['count'] >= _PW_LOCK_THRESHOLD:
+        rec['locked_until'] = datetime.now(timezone.utc) + timedelta(minutes=_PW_LOCK_MINUTES)
+        rec['count'] = 0
+        _notify(
+            f'Password Lockout — {user_name}',
+            f'User:    {user_name} ({user_email})\n'
+            f'Action:  {action_context}\n'
+            f'Reason:  {_PW_LOCK_THRESHOLD} consecutive failed password attempts\n'
+            f'Locked:  {_PW_LOCK_MINUTES} minutes\n'
+            f'IP:      {_get_real_ip()}',
+        )
+        return True
+    return False
+
 ALLOWED_EXTENSIONS = {
     'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp',
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -1313,11 +1343,17 @@ def decrypt_file(file_uuid):
             return jsonify(success=False, error='No approved download request found or it has expired.'), 403
         ar.status      = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
+    locked, lock_msg = _check_pw_locked(current_user.id)
+    if locked:
+        return jsonify(success=False, error=lock_msg), 429
     password = request.form.get('password', '')
     if not current_user.check_password(password):
         _log_file_access('download', rec, 'denied', 'Wrong password at execution step')
         db.session.commit()
-        return jsonify(success=False, error='Incorrect password. Use your FileVault login password.'), 403
+        now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, f'Decrypt "{rec.original_name}"')
+        err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password. Use your FileVault login password.'
+        return jsonify(success=False, error=err), 401
+    _pw_attempts.pop(current_user.id, None)
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
     if not os.path.exists(file_path):
         return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
@@ -1401,10 +1437,16 @@ def delete_file(file_uuid):
             _log_file_access('delete', rec, 'denied', 'No approved request or token expired')
             db.session.commit()
             return (jsonify(success=False, error='Admin approval required before deletion.'), 403) if is_ajax else abort(403)
+        locked, lock_msg = _check_pw_locked(current_user.id)
+        if locked:
+            return (jsonify(success=False, error=lock_msg), 429) if is_ajax else abort(429)
         if not current_user.check_password(password):
             _log_file_access('delete', rec, 'denied', 'Wrong password at execution step')
             db.session.commit()
-            return (jsonify(success=False, error='Incorrect password.'), 403) if is_ajax else abort(403)
+            now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, f'Delete "{rec.original_name}"')
+            err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password.'
+            return (jsonify(success=False, error=err), 401) if is_ajax else abort(403)
+        _pw_attempts.pop(current_user.id, None)
         ar.status      = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
 
@@ -1465,10 +1507,16 @@ def rename_file(file_uuid):
             _log_file_access('rename', rec, 'denied', 'No approved request')
             db.session.commit()
             return jsonify(success=False, error='Admin approval required before renaming.'), 403
+        locked, lock_msg = _check_pw_locked(current_user.id)
+        if locked:
+            return jsonify(success=False, error=lock_msg), 429
         if not current_user.check_password(password):
             _log_file_access('rename', rec, 'denied', 'Wrong password at execution step')
             db.session.commit()
-            return jsonify(success=False, error='Incorrect password.'), 403
+            now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, f'Rename "{rec.original_name}"')
+            err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password.'
+            return jsonify(success=False, error=err), 401
+        _pw_attempts.pop(current_user.id, None)
         ar.status      = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
     new_name = request.form.get('name', '').strip()
@@ -1718,7 +1766,7 @@ def admin_approve_action_request(req_id):
         'status':      'approved',
         'reason':      ar.admin_reason,
         'token':       ar.exec_token,
-        'expires_at':  ar.expires_at.strftime('%H:%M:%S UTC'),
+        'expires_at':  ar.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ'),
         'user_id':     ar.requested_by_id,
         'action_type': ar.action_type,
         'file_uuid':   ar.file.uuid if ar.file else '',
@@ -1908,6 +1956,23 @@ def public_download_file(token_str):
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], tok.file.stored_name)
     return send_from_directory(app.config['UPLOAD_FOLDER'], tok.file.stored_name,
                                as_attachment=True, download_name=tok.file.original_name)
+
+
+# ---------------------------------------------------------------------------
+# My Requests (non-admin: view own ActionRequest history)
+# ---------------------------------------------------------------------------
+@app.route('/my-requests')
+@login_required
+def my_requests():
+    if current_user.is_admin:
+        return redirect(url_for('admin_action_requests'))
+    page = request.args.get('page', 1, type=int)
+    status_filter = request.args.get('status', '')
+    q = ActionRequest.query.filter_by(requested_by_id=current_user.id)
+    if status_filter:
+        q = q.filter_by(status=status_filter)
+    reqs = q.order_by(ActionRequest.requested_at.desc()).paginate(page=page, per_page=20, error_out=False)
+    return render_template('fim/my_requests.html', requests=reqs, status_filter=status_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -2587,15 +2652,27 @@ def fim_replace_file(file_uuid):
         ).first()
         if not ar or ar.is_expired:
             return jsonify(success=False, error='Admin approval required before replacing this file.'), 403
+        locked, lock_msg = _check_pw_locked(current_user.id)
+        if locked:
+            return jsonify(success=False, error=lock_msg), 429
         password = request.form.get('password', '')
         if not current_user.check_password(password):
-            return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
+            now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, f'Replace "{file_rec.original_name}"')
+            err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password. Please confirm your FileVault password to replace this file.'
+            return jsonify(success=False, error=err), 401
+        _pw_attempts.pop(current_user.id, None)
         ar.status = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
     else:
+        locked, lock_msg = _check_pw_locked(current_user.id)
+        if locked:
+            return jsonify(success=False, error=lock_msg), 429
         password = request.form.get('password', '')
         if not current_user.check_password(password):
-            return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
+            now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email, f'Replace "{file_rec.original_name}" (admin)')
+            err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password. Please confirm your FileVault password to replace this file.'
+            return jsonify(success=False, error=err), 401
+        _pw_attempts.pop(current_user.id, None)
 
     if 'file' not in request.files or request.files['file'].filename == '':
         return jsonify(success=False, error='No replacement file selected'), 400

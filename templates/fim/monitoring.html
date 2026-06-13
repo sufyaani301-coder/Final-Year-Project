@@ -155,12 +155,17 @@
                   {# ── Approved action banner ── #}
                   {% set _my_ar = my_approved_by_file.get(f.id) %}
                   {% if _my_ar %}
-                  <div class="w-100 mt-1" id="approved-banner-{{ f.uuid }}">
+                  <div class="w-100 mt-1" id="approved-banner-{{ f.uuid }}"
+                       data-expires="{{ _my_ar.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">
                     <div class="d-flex align-items-center gap-1 rounded px-2 py-1"
                          style="background:rgba(25,135,84,.18);border:1px solid rgba(25,135,84,.55);font-size:.75rem">
                       <i class="bi bi-check-circle-fill text-success"></i>
-                      <span class="flex-grow-1 fw-semibold text-success">Approved — {{ _my_ar.action_label }}</span>
+                      <span class="flex-grow-1">
+                        <span class="fw-semibold text-success">Approved — {{ _my_ar.action_label }}</span>
+                        <span class="ms-2 text-muted" id="exec-countdown-{{ f.uuid }}" style="font-size:.7rem"></span>
+                      </span>
                       <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.7"
+                              id="exec-btn-{{ f.uuid }}"
                               onclick="executeApproved('{{ f.uuid }}','{{ _my_ar.action_type }}','{{ _my_ar.exec_token }}',{{ _my_ar.id }},'{{ f.original_name | e }}')">
                         <i class="bi bi-play-fill"></i> Execute Now
                       </button>
@@ -1091,27 +1096,63 @@ document.getElementById('decryptPassword')?.addEventListener('keydown', e => {
 // ── Execute Approved Action ──────────────────────────────────────────────────
 let _execUuid = '', _execAction = '', _execToken = '', _execReqId = 0;
 
-function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName) {
+function _startCountdown(uuid, expiresAtIso) {
+  const expiresAt = new Date(expiresAtIso);
+  const countEl = document.getElementById('exec-countdown-' + uuid);
+  const execBtn = document.getElementById('exec-btn-' + uuid);
+  const banner  = document.getElementById('approved-banner-' + uuid);
+  const tick = () => {
+    const secsLeft = Math.floor((expiresAt - new Date()) / 1000);
+    if (secsLeft <= 0) {
+      if (countEl) countEl.textContent = '';
+      if (execBtn) execBtn.remove();
+      if (banner) {
+        const inner = banner.querySelector('div');
+        if (inner) {
+          inner.style.background = 'rgba(108,117,125,.12)';
+          inner.style.borderColor = 'rgba(108,117,125,.35)';
+          const icon = inner.querySelector('i');
+          if (icon) { icon.className = 'bi bi-clock text-secondary'; }
+          const strong = inner.querySelector('.fw-semibold');
+          if (strong) { strong.textContent = 'Approval expired — request again'; strong.className = 'text-secondary'; }
+        }
+      }
+      return;
+    }
+    const mins = Math.floor(secsLeft / 60);
+    const secs = secsLeft % 60;
+    if (countEl) countEl.textContent = `(${mins}:${secs.toString().padStart(2,'0')} left)`;
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName, expiresAtIso) {
   const row = document.getElementById('row-' + fileUuid);
   if (!row) return;
-  // Remove stale banner if present
   const old = document.getElementById('approved-banner-' + fileUuid);
   if (old) old.remove();
   const label = actionType.charAt(0).toUpperCase() + actionType.slice(1);
+  const safeFile = (fileName || '').replace(/'/g, "\\'");
   const banner = document.createElement('div');
   banner.className = 'w-100 mt-1';
   banner.id = 'approved-banner-' + fileUuid;
+  if (expiresAtIso) banner.dataset.expires = expiresAtIso;
   banner.innerHTML = `<div class="d-flex align-items-center gap-1 rounded px-2 py-1"
     style="background:rgba(25,135,84,.18);border:1px solid rgba(25,135,84,.55);font-size:.75rem">
     <i class="bi bi-check-circle-fill text-success"></i>
-    <span class="flex-grow-1 fw-semibold text-success">Approved — ${label}</span>
-    <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.7"
-      onclick="executeApproved('${fileUuid}','${actionType}','${token}',${reqId},'${(fileName||'').replace(/'/g,"\\'")}')">
+    <span class="flex-grow-1">
+      <span class="fw-semibold text-success">Approved — ${label}</span>
+      <span class="ms-2 text-muted" id="exec-countdown-${fileUuid}" style="font-size:.7rem"></span>
+    </span>
+    <button class="btn btn-success py-0 px-2" id="exec-btn-${fileUuid}" style="font-size:.72rem;line-height:1.7"
+      onclick="executeApproved('${fileUuid}','${actionType}','${token}',${reqId},'${safeFile}')">
       <i class="bi bi-play-fill"></i> Execute Now
     </button>
   </div>`;
   const actionsCell = row.querySelector('td:last-child .d-flex');
   if (actionsCell) actionsCell.appendChild(banner);
+  if (expiresAtIso) _startCountdown(fileUuid, expiresAtIso);
 }
 
 function executeApproved(uuid, action, token, reqId, fileName) {
@@ -1204,7 +1245,7 @@ if (typeof io !== 'undefined') {
     if (data.user_id != {{ current_user.id }}) return;
     if (data.status === 'approved') {
       showToast(`✅ Your ${data.action_type} request was approved! Check the file row below.`, 'success');
-      _injectApprovedBanner(data.file_uuid, data.action_type, data.token, data.request_id, '');
+      _injectApprovedBanner(data.file_uuid, data.action_type, data.token, data.request_id, '', data.expires_at || '');
     } else if (data.status === 'rejected') {
       showToast(`❌ ${data.action_type.charAt(0).toUpperCase()+data.action_type.slice(1)} request rejected — ${data.reason}`, 'danger');
     }
@@ -1282,5 +1323,11 @@ async function quickReject(reqId) {
     showToast(d.error || 'Rejection failed.', 'danger');
   }
 }
+
+// Initialise countdown timers for template-rendered approved banners
+document.querySelectorAll('[data-expires]').forEach(banner => {
+  const uuid = banner.id.replace('approved-banner-', '');
+  _startCountdown(uuid, banner.dataset.expires);
+});
 </script>
 {% endblock %}

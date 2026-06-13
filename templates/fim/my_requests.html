@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% block title %}My Requests — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">My Action Requests</span>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="container-fluid px-4 py-4">
+
+      <!-- Status filter tabs -->
+      <div class="d-flex gap-2 mb-4 flex-wrap">
+        {% for s, label in [('','All'),('pending','Pending'),('approved','Approved'),('rejected','Rejected'),('executed','Executed')] %}
+        <a href="{{ url_for('my_requests', status=s) }}"
+           class="btn btn-sm {% if status_filter == s %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+          {{ label }}
+        </a>
+        {% endfor %}
+      </div>
+
+      {% if requests.items %}
+      <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>File</th>
+                <th>Action</th>
+                <th>Status</th>
+                <th>Submitted</th>
+                <th>Justification</th>
+                <th>Admin Decision</th>
+                <th>Expires / Executed</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for ar in requests.items %}
+            <tr>
+              <td>
+                <div class="fw-semibold small">{{ ar.file.original_name if ar.file else '(deleted)' }}</div>
+                {% if ar.file %}
+                {% set fc = ar.file.classification or 5 %}
+                <span class="badge fw-semibold" style="font-size:.6rem;
+                  background:{% if fc==1 %}#7c0000{% elif fc==2 %}#b54a00{% elif fc==3 %}#856404
+                  {% elif fc==4 %}#084298{% else %}#155724{% endif %}">
+                  L{{ fc }}
+                </span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge bg-secondary">{{ ar.action_label }}</span>
+              </td>
+              <td>{{ ar.status_badge | safe }}</td>
+              <td class="text-muted small">{{ ar.requested_at.strftime('%b %d, %Y %H:%M') }}</td>
+              <td class="small text-muted" style="max-width:200px">
+                <span title="{{ ar.justification }}">{{ ar.justification[:80] }}{% if ar.justification and ar.justification|length > 80 %}…{% endif %}</span>
+              </td>
+              <td class="small">
+                {% if ar.admin_reason %}
+                  {% if ar.status == 'approved' %}
+                  <span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>{{ ar.admin_reason }}</span>
+                  {% elif ar.status == 'rejected' %}
+                  <span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>{{ ar.admin_reason }}</span>
+                  {% else %}
+                  {{ ar.admin_reason }}
+                  {% endif %}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="small text-muted">
+                {% if ar.status == 'approved' and ar.expires_at %}
+                  {% set now_utc = now_utc if now_utc is defined else none %}
+                  {% if ar.is_expired %}
+                  <span class="text-secondary"><i class="bi bi-clock"></i> Expired</span>
+                  {% else %}
+                  <span class="text-success fw-semibold"
+                        data-expires="{{ ar.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                        id="my-req-countdown-{{ ar.id }}">
+                    computing…
+                  </span>
+                  {% endif %}
+                {% elif ar.status == 'executed' and ar.executed_at %}
+                  {{ ar.executed_at.strftime('%b %d %H:%M') }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Pagination -->
+      {% if requests.pages > 1 %}
+      <nav class="mt-3">
+        <ul class="pagination pagination-sm justify-content-center mb-0">
+          {% if requests.has_prev %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('my_requests', page=requests.prev_num, status=status_filter) }}">‹</a>
+          </li>
+          {% endif %}
+          {% for p in requests.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+            <li class="page-item {% if p == requests.page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('my_requests', page=p, status=status_filter) }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+          {% endfor %}
+          {% if requests.has_next %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('my_requests', page=requests.next_num, status=status_filter) }}">›</a>
+          </li>
+          {% endif %}
+        </ul>
+      </nav>
+      {% endif %}
+
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+        No {{ status_filter or '' }} requests found.
+        <div class="mt-2">
+          <a href="{{ url_for('fim_monitoring') }}" class="btn btn-sm btn-outline-primary">Go to Files</a>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Countdown timers for approved requests
+document.querySelectorAll('[data-expires]').forEach(el => {
+  const expiresAt = new Date(el.dataset.expires);
+  const tick = () => {
+    const secsLeft = Math.floor((expiresAt - new Date()) / 1000);
+    if (secsLeft <= 0) {
+      el.textContent = 'Expired';
+      el.className = 'text-secondary';
+      return;
+    }
+    const mins = Math.floor(secsLeft / 60);
+    const secs = secsLeft % 60;
+    el.textContent = `${mins}:${secs.toString().padStart(2, '0')} remaining`;
+    setTimeout(tick, 1000);
+  };
+  tick();
+});
+</script>
+{% endblock %}
