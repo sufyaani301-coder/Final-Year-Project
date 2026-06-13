@@ -75,6 +75,7 @@
           <thead class="table-light">
             <tr>
               <th>File</th>
+              <th>Classification</th>
               <th>Status</th>
               <th>Last Check</th>
               <th>Alerts</th>
@@ -96,6 +97,15 @@
                   </div>
                 </div>
               </div>
+            </td>
+            <td>
+              {% set fc = f.classification or 5 %}
+              <span class="badge fw-semibold" style="font-size:.65rem;letter-spacing:.04em;padding:3px 7px;border-radius:4px;
+                background:{% if fc==1 %}#7c0000{% elif fc==2 %}#b54a00{% elif fc==3 %}#856404
+                {% elif fc==4 %}#084298{% else %}#155724{% endif %};color:#fff"
+                title="{{ f.classification_label }}">
+                L{{ fc }} {{ f.classification_label }}
+              </span>
             </td>
             <td>{{ f.status_badge[0] | safe }}</td>
             <td class="text-muted small">
@@ -272,6 +282,19 @@
           <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
         </div>
         <input type="file" name="file" id="fileInput" class="d-none"/>
+        <div class="mt-3">
+          <label class="form-label small fw-semibold mb-1" for="uploadClassification">
+            <i class="bi bi-shield-lock me-1"></i>Classification Level
+          </label>
+          <select id="uploadClassification" class="form-select form-select-sm">
+            <option value="1" style="background:#7c0000;color:#fff">L1 — TOP SECRET (only L1 users)</option>
+            <option value="2" style="background:#b54a00;color:#fff">L2 — SECRET (L1–L2 users)</option>
+            <option value="3" style="background:#856404;color:#fff">L3 — CONFIDENTIAL (L1–L3 users)</option>
+            <option value="4" style="background:#084298;color:#fff">L4 — RESTRICTED (L1–L4 users)</option>
+            <option value="5" selected style="background:#155724;color:#fff">L5 — UNCLASSIFIED (all users)</option>
+          </select>
+          <div class="text-muted" style="font-size:.72rem;margin-top:3px">Who can access this file is determined by the level above.</div>
+        </div>
         <div id="uploadProgress" class="d-none mt-3">
           <div class="d-flex justify-content-between small mb-1">
             <span>Uploading…</span><span id="uploadProgressPct">0%</span>
@@ -593,7 +616,7 @@ async function startUpload() {
   const form = new FormData();
   form.append('file', file);
   form.append('csrf_token', CSRF);
-  form.append('classification', '5');
+  form.append('classification', document.getElementById('uploadClassification').value);
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '{{ url_for("upload_file") }}');
   xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
