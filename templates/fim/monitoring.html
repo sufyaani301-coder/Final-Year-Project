@@ -111,10 +111,33 @@
             <td class="text-muted small">
               {% if f.last_checked_at %}{{ f.last_checked_at.strftime('%b %d %H:%M') }}{% else %}—{% endif %}
             </td>
-            <td>
+            <td id="alert-cell-{{ f.uuid }}">
               {% if f.alert_count > 0 %}
-              <span class="badge bg-danger">{{ f.alert_count }}</span>
-              {% else %}<span class="text-muted">0</span>{% endif %}
+                {% if current_user.is_admin %}
+                  {% set _oa = open_alerts_by_file.get(f.id) %}
+                  {% if _oa %}
+                  <div class="d-flex align-items-center gap-1 flex-nowrap">
+                    <span class="badge bg-danger">{{ f.alert_count }}</span>
+                    <button class="btn py-0 px-1 btn-outline-success" style="font-size:.68rem;line-height:1.6"
+                            title="Acknowledge — mark as reviewed"
+                            onclick="quickAckAlert({{ _oa.id }},'{{ f.uuid }}')">
+                      <i class="bi bi-check-lg"></i> Ack
+                    </button>
+                    <button class="btn py-0 px-1 btn-outline-secondary" style="font-size:.68rem;line-height:1.6"
+                            title="Mark as false positive"
+                            onclick="quickFpAlert({{ _oa.id }},'{{ f.uuid }}')">
+                      <i class="bi bi-slash-circle"></i> FP
+                    </button>
+                  </div>
+                  {% else %}
+                  <span class="badge bg-secondary" title="All alerts closed">{{ f.alert_count }}</span>
+                  {% endif %}
+                {% else %}
+                <span class="badge bg-danger">{{ f.alert_count }}</span>
+                {% endif %}
+              {% else %}
+              <span class="text-muted">0</span>
+              {% endif %}
             </td>
             <td>
               <div class="d-flex gap-1 flex-wrap">
@@ -1255,6 +1278,33 @@ if (typeof io !== 'undefined') {
       showToast(`❌ ${data.action_type.charAt(0).toUpperCase()+data.action_type.slice(1)} request rejected — ${data.reason}`, 'danger');
     }
   });
+}
+
+// ── Inline alert Acknowledge / False-positive ────────────────────────────────
+async function quickAckAlert(alertId, fileUuid) {
+  const fd = new FormData();
+  fd.append('csrf_token', CSRF);
+  try {
+    const r = await fetch(`/fim/alerts/${alertId}/acknowledge`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('alert-cell-' + fileUuid).innerHTML = '<span class="text-muted">0</span>';
+      showToast('Alert acknowledged.', 'success');
+    } else { showToast(d.error || 'Failed.', 'danger'); }
+  } catch(e) { showToast('Network error.', 'danger'); }
+}
+
+async function quickFpAlert(alertId, fileUuid) {
+  const fd = new FormData();
+  fd.append('csrf_token', CSRF);
+  try {
+    const r = await fetch(`/fim/alerts/${alertId}/false-positive`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('alert-cell-' + fileUuid).innerHTML = '<span class="text-muted">0</span>';
+      showToast('Marked as false positive.', 'info');
+    } else { showToast(d.error || 'Failed.', 'danger'); }
+  } catch(e) { showToast('Network error.', 'danger'); }
 }
 
 // ── Request Action (non-admin) ──────────────────────────────────────────────

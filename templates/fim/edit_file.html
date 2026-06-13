@@ -35,7 +35,7 @@
             <a href="{{ url_for('fim_file_status', file_id=file.id) }}" class="btn btn-sm btn-outline-secondary">
               <i class="bi bi-x-lg me-1"></i>Cancel
             </a>
-            <button id="saveBtn" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#pwConfirmModal">
+            <button id="saveBtn" class="btn btn-sm btn-primary">
               <i class="bi bi-floppy me-1"></i>Save
             </button>
           </div>
@@ -146,13 +146,17 @@ function showToast(msg, type = 'info') {
   el.addEventListener('hidden.bs.toast', () => el.remove());
 }
 
-// Reset modal state every time it opens (works with data-bs-toggle)
-document.getElementById('pwConfirmModal').addEventListener('show.bs.modal', () => {
+function _getSaveModal() {
+  return bootstrap.Modal.getOrCreateInstance(document.getElementById('pwConfirmModal'));
+}
+
+document.getElementById('saveBtn').addEventListener('click', () => {
   document.getElementById('pwInput').value = '';
   document.getElementById('pwError').style.display = 'none';
   const btn = document.getElementById('pwConfirmSave');
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+  _getSaveModal().show();
   setTimeout(() => document.getElementById('pwInput').focus(), 300);
 });
 
@@ -165,30 +169,43 @@ document.getElementById('pwConfirmSave').addEventListener('click', async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
 
-  const form = new FormData();
-  form.append('csrf_token', CSRF);
-  form.append('content', editor.getValue());
-  if (EDIT_TOKEN) form.append('edit_token', EDIT_TOKEN);
-  form.append('password', pw);
+  const fd = new FormData();
+  fd.append('csrf_token', CSRF);
+  fd.append('content', editor.getValue());
+  if (EDIT_TOKEN) fd.append('edit_token', EDIT_TOKEN);
+  fd.append('password', pw);
 
+  let resp;
   try {
-    const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
-    const d = await r.json();
-    if (d.success) {
-      bootstrap.Modal.getInstance(document.getElementById('pwConfirmModal'))?.hide();
-      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger' };
-      showToast(d.message || 'Saved.', colours[d.status] || 'success');
-    } else {
-      err.textContent = d.error || 'Save failed.';
-      err.style.display = '';
-      document.getElementById('pwInput').value = '';
-      document.getElementById('pwInput').focus();
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
-    }
-  } catch(e) {
-    err.textContent = 'Network error — try again.';
+    resp = await fetch('/file/' + FILE_UUID + '/edit', { method: 'POST', body: fd });
+  } catch(netErr) {
+    err.textContent = 'Network error — check connection.';
     err.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch(parseErr) {
+    err.textContent = 'Server error (HTTP ' + resp.status + ') — try again.';
+    err.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+    return;
+  }
+
+  if (data.success) {
+    _getSaveModal().hide();
+    const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger' };
+    showToast(data.message || 'File saved.', colours[data.status] || 'success');
+  } else {
+    err.textContent = data.error || 'Save failed.';
+    err.style.display = '';
+    document.getElementById('pwInput').value = '';
+    document.getElementById('pwInput').focus();
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
   }

@@ -2308,6 +2308,16 @@ def fim_monitoring():
         ).all():
             pending_by_file.setdefault(ar.file_id, []).append(ar)
 
+    # Admin: most recent open/escalated alert per file (for inline Ack/FP buttons)
+    open_alerts_by_file = {}
+    if current_user.is_admin and file_ids:
+        for al in IntegrityAlert.query.filter(
+            IntegrityAlert.file_id.in_(file_ids),
+            IntegrityAlert.status.in_(['open', 'escalated']),
+        ).order_by(IntegrityAlert.raised_at.desc()).all():
+            if al.file_id not in open_alerts_by_file:
+                open_alerts_by_file[al.file_id] = al
+
     # Non-admin: their own approved (not yet expired/executed) requests per file
     my_approved_by_file = {}
     if not current_user.is_admin and file_ids:
@@ -2330,6 +2340,7 @@ def fim_monitoring():
         order=order,
         policies=policies,
         pending_by_file=pending_by_file,
+        open_alerts_by_file=open_alerts_by_file,
         my_approved_by_file=my_approved_by_file,
     )
 
