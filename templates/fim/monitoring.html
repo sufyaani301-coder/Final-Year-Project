@@ -208,7 +208,7 @@
                 </a>
                 {% endif %}
                 {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
-                {% if _fext in ('txt','csv','json','xml') %}
+                {% if _fext in ('txt','csv','tsv','log','md','rst','json','xml','yaml','yml','toml','ini','cfg','conf','env','html','htm','css','js','ts','jsx','tsx','py','sh','bash','sql','php','rb','java','c','cpp','h','rs','go','swift','kt') %}
                 <a href="{{ url_for('edit_file_page', file_uuid=f.uuid) }}"
                    class="btn btn-sm btn-outline-info" title="Edit in browser">
                   <i class="bi bi-pencil-square"></i>

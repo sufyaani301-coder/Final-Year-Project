@@ -210,7 +210,17 @@ ALLOWED_EXTENSIONS = {
 }
 
 # Text file types that can be edited in the browser
-EDITABLE_EXTENSIONS = {'txt', 'csv', 'json', 'xml'}
+EDITABLE_EXTENSIONS = {
+    # Plain text / data
+    'txt', 'csv', 'tsv', 'log', 'md', 'rst',
+    # Config / markup
+    'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env',
+    # Web
+    'html', 'htm', 'css', 'js', 'ts', 'jsx', 'tsx',
+    # Programming languages
+    'py', 'sh', 'bash', 'sql', 'php', 'rb', 'java',
+    'c', 'cpp', 'h', 'rs', 'go', 'swift', 'kt',
+}
 EDITOR_SIZE_LIMIT   = 512 * 1024  # 512 KB
 
 ACTION_ICONS = {
@@ -2769,7 +2779,25 @@ def edit_file_page(file_uuid):
         flash(f'Could not read file: {exc}', 'danger')
         return redirect(url_for('fim_file_status', file_id=file_rec.id))
 
-    cm_mode = {'json': 'application/json', 'xml': 'application/xml'}.get(ext, 'text/plain')
+    cm_mode = {
+        'json': 'application/json',
+        'xml':  'application/xml',
+        'html': 'text/html', 'htm': 'text/html',
+        'css':  'text/css',
+        'js':   'text/javascript', 'jsx': 'text/javascript',
+        'ts':   'text/typescript', 'tsx': 'text/typescript',
+        'py':   'text/x-python',
+        'sh':   'text/x-sh', 'bash': 'text/x-sh',
+        'sql':  'text/x-sql',
+        'php':  'text/x-php',
+        'rb':   'text/x-ruby',
+        'java': 'text/x-java',
+        'c':    'text/x-csrc', 'cpp': 'text/x-c++src', 'h': 'text/x-csrc',
+        'rs':   'text/x-rustsrc',
+        'go':   'text/x-go',
+        'md':   'text/x-markdown',
+        'yaml': 'text/x-yaml', 'yml': 'text/x-yaml',
+    }.get(ext, 'text/plain')
     edit_token = request.args.get('token', '')
     return render_template('fim/edit_file.html',
         file=file_rec, content=content, cm_mode=cm_mode, ext=ext, edit_token=edit_token)
