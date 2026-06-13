@@ -750,6 +750,14 @@ def auth_login():
         if remaining <= 0:
             record['locked_until'] = datetime.now(timezone.utc) + timedelta(minutes=_LOCKOUT_MINUTES)
             flash(f'Too many failed attempts. Account locked for {_LOCKOUT_MINUTES} minutes.', 'danger')
+            _notify(
+                f'Account Locked — {email}',
+                f'Account:         {email}\n'
+                f'Reason:          {_LOCKOUT_THRESHOLD} consecutive failed login attempts\n'
+                f'Locked for:      {_LOCKOUT_MINUTES} minutes\n'
+                f'IP address:      {_get_real_ip()}\n'
+                f'Account exists:  {"Yes" if user else "No (unknown email)"}',
+            )
         else:
             flash(f'Invalid email or password. {remaining} attempt(s) left before lockout.', 'danger')
 
