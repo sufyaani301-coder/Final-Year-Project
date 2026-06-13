@@ -35,14 +35,6 @@
       </a>
     </li>
 
-    {% if current_user.is_admin %}
-    <li class="nav-item">
-      <a href="{{ url_for('fim_policies') }}"
-         class="nav-link sidebar-link {% if request.endpoint == 'fim_policies' %}active{% endif %}">
-        <i class="bi bi-sliders me-2"></i>Policies
-      </a>
-    </li>
-    {% endif %}
 
     <!-- Divider: System -->
     <li class="nav-item mt-2">

@@ -78,7 +78,6 @@
               <th>Status</th>
               <th>Last Check</th>
               <th>Alerts</th>
-              <th>Policy</th>
               <th style="min-width:140px">Actions</th>
             </tr>
           </thead>
@@ -107,7 +106,6 @@
               <span class="badge bg-danger">{{ f.alert_count }}</span>
               {% else %}<span class="text-muted">0</span>{% endif %}
             </td>
-            <td class="text-muted small">{{ f.policy.name if f.policy else '—' }}</td>
             <td>
               <div class="d-flex gap-1 flex-wrap">
 
