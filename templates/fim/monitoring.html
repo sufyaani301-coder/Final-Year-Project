@@ -841,10 +841,9 @@ function _hideReplaceError() {
   document.getElementById('replacePasswordError').style.display = 'none';
 }
 
-function openReplace(uuid, fileName) {
-  _replaceUuid = uuid;
-  // _replaceToken is set by executeApproved for non-admin; clear it for direct admin use
-  if (arguments.length < 3) _replaceToken = null;
+function openReplace(uuid, fileName, execToken) {
+  _replaceUuid  = uuid;
+  _replaceToken = execToken || null;
   document.getElementById('replaceFileName').textContent = `"${fileName}"`;
   document.getElementById('replaceChosen').textContent = '';
   document.getElementById('replaceInput').value = '';
@@ -1174,9 +1173,7 @@ function executeApproved(uuid, action, token, reqId, fileName, isEncrypted) {
     return;
   }
   if (action === 'replace') {
-    // Open the replace modal — token will be included in the form submission
-    _replaceToken = token;
-    openReplace(uuid, fileName);
+    openReplace(uuid, fileName, token);
     return;
   }
   // delete or rename → open modal with password

@@ -35,7 +35,7 @@
             <a href="{{ url_for('fim_file_status', file_id=file.id) }}" class="btn btn-sm btn-outline-secondary">
               <i class="bi bi-x-lg me-1"></i>Cancel
             </a>
-            <button id="saveBtn" class="btn btn-sm btn-primary">
+            <button id="saveBtn" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#pwConfirmModal">
               <i class="bi bi-floppy me-1"></i>Save
             </button>
           </div>
@@ -146,30 +146,24 @@ function showToast(msg, type = 'info') {
   el.addEventListener('hidden.bs.toast', () => el.remove());
 }
 
-let _pwModal = null;
-
-document.getElementById('saveBtn').addEventListener('click', () => {
+// Reset modal state every time it opens (works with data-bs-toggle)
+document.getElementById('pwConfirmModal').addEventListener('show.bs.modal', () => {
   document.getElementById('pwInput').value = '';
   document.getElementById('pwError').style.display = 'none';
-  document.getElementById('pwConfirmSave').disabled = false;
-  document.getElementById('pwConfirmSave').innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
-  if (!_pwModal) _pwModal = new bootstrap.Modal(document.getElementById('pwConfirmModal'));
-  _pwModal.show();
-  setTimeout(() => document.getElementById('pwInput').focus(), 400);
+  const btn = document.getElementById('pwConfirmSave');
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+  setTimeout(() => document.getElementById('pwInput').focus(), 300);
 });
 
-document.getElementById('pwConfirmSave')?.addEventListener('click', async () => {
-  const pw = document.getElementById('pwInput').value;
-  if (!pw) {
-    document.getElementById('pwError').textContent = 'Password is required.';
-    document.getElementById('pwError').style.display = '';
-    return;
-  }
-  document.getElementById('pwError').style.display = 'none';
-
-  const confirmBtn = document.getElementById('pwConfirmSave');
-  confirmBtn.disabled = true;
-  confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+document.getElementById('pwConfirmSave').addEventListener('click', async () => {
+  const pw  = document.getElementById('pwInput').value;
+  const err = document.getElementById('pwError');
+  const btn = document.getElementById('pwConfirmSave');
+  if (!pw) { err.textContent = 'Password is required.'; err.style.display = ''; return; }
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
 
   const form = new FormData();
   form.append('csrf_token', CSRF);
@@ -181,27 +175,26 @@ document.getElementById('pwConfirmSave')?.addEventListener('click', async () => 
     const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
     const d = await r.json();
     if (d.success) {
-      _pwModal?.hide();
-      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger', replaced:'info' };
+      bootstrap.Modal.getInstance(document.getElementById('pwConfirmModal'))?.hide();
+      const colours = { tampered:'warning', ok:'success', skip:'info', error:'danger', missing:'danger' };
       showToast(d.message || 'Saved.', colours[d.status] || 'success');
     } else {
-      // Keep modal open — show error inline
-      document.getElementById('pwError').textContent = d.error || 'Save failed.';
-      document.getElementById('pwError').style.display = '';
+      err.textContent = d.error || 'Save failed.';
+      err.style.display = '';
       document.getElementById('pwInput').value = '';
       document.getElementById('pwInput').focus();
-      confirmBtn.disabled = false;
-      confirmBtn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
     }
   } catch(e) {
-    document.getElementById('pwError').textContent = 'Network error — try again.';
-    document.getElementById('pwError').style.display = '';
-    confirmBtn.disabled = false;
-    confirmBtn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
+    err.textContent = 'Network error — try again.';
+    err.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save';
   }
 });
 
-document.getElementById('pwInput')?.addEventListener('keydown', e => {
+document.getElementById('pwInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('pwConfirmSave').click();
 });
 </script>
