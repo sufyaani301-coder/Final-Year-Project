@@ -2267,12 +2267,12 @@ def fim_monitoring():
     # Non-admin: their own approved (not yet expired/executed) requests per file
     my_approved_by_file = {}
     if not current_user.is_admin and file_ids:
-        now_utc = datetime.now(timezone.utc)
+        now_naive = datetime.utcnow()  # naive UTC — matches db.DateTime storage
         for ar in ActionRequest.query.filter(
             ActionRequest.file_id.in_(file_ids),
             ActionRequest.requested_by_id == current_user.id,
             ActionRequest.status == 'approved',
-            ActionRequest.expires_at > now_utc,
+            ActionRequest.expires_at > now_naive,
         ).all():
             my_approved_by_file[ar.file_id] = ar
 

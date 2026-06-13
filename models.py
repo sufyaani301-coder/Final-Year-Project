@@ -599,7 +599,11 @@ class ActionRequest(db.Model):
     def is_expired(self):
         if self.status != 'approved':
             return False
-        return self.expires_at and datetime.now(timezone.utc) > self.expires_at
+        if not self.expires_at:
+            return False
+        # expires_at is stored as naive UTC; compare with naive utcnow()
+        exp = self.expires_at.replace(tzinfo=None)
+        return datetime.utcnow() > exp
 
     @property
     def action_label(self):
