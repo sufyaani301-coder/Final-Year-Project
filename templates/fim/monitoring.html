@@ -166,7 +166,7 @@
                       </span>
                       <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.7"
                               id="exec-btn-{{ f.uuid }}"
-                              onclick="executeApproved('{{ f.uuid }}','{{ _my_ar.action_type }}','{{ _my_ar.exec_token }}',{{ _my_ar.id }},'{{ f.original_name | e }}')">
+                              onclick="executeApproved('{{ f.uuid }}','{{ _my_ar.action_type }}','{{ _my_ar.exec_token }}',{{ _my_ar.id }},'{{ f.original_name | e }}',{{ f.is_encrypted | tojson }})">
                         <i class="bi bi-play-fill"></i> Execute Now
                       </button>
                     </div>
@@ -1045,10 +1045,11 @@ document.getElementById('shareLinkCopy')?.addEventListener('click', () => {
 });
 
 // ── Decrypt & Download ──
-let _decryptUuid = null, _decryptName = null;
-function openDecrypt(fileUuid, fileName) {
-  _decryptUuid = fileUuid;
-  _decryptName = fileName;
+let _decryptUuid = null, _decryptName = null, _decryptToken = '';
+function openDecrypt(fileUuid, fileName, execToken) {
+  _decryptUuid  = fileUuid;
+  _decryptName  = fileName;
+  _decryptToken = execToken || '';
   document.getElementById('decryptFileName').textContent = fileName;
   document.getElementById('decryptPassword').value = '';
   document.getElementById('decryptError').style.display = 'none';
@@ -1067,6 +1068,7 @@ document.getElementById('decryptConfirm')?.addEventListener('click', async () =>
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('password', password);
+  if (_decryptToken) form.append('token', _decryptToken);
   try {
     const r = await fetch(`/decrypt/${_decryptUuid}`, { method: 'POST', body: form });
     if (!r.ok) {
@@ -1083,6 +1085,7 @@ document.getElementById('decryptConfirm')?.addEventListener('click', async () =>
     URL.revokeObjectURL(url);
     bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
     showToast(`"${_decryptName}" decrypted and downloaded.`, 'success');
+    document.getElementById('approved-banner-' + _decryptUuid)?.remove();
   } catch(e) {
     errEl.textContent = 'Network error — please try again.';
     errEl.style.display = '';
@@ -1127,13 +1130,14 @@ function _startCountdown(uuid, expiresAtIso) {
   tick();
 }
 
-function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName, expiresAtIso) {
+function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName, expiresAtIso, isEncrypted) {
   const row = document.getElementById('row-' + fileUuid);
   if (!row) return;
   const old = document.getElementById('approved-banner-' + fileUuid);
   if (old) old.remove();
   const label = actionType.charAt(0).toUpperCase() + actionType.slice(1);
   const safeFile = (fileName || '').replace(/'/g, "\\'");
+  const encFlag  = isEncrypted ? 'true' : 'false';
   const banner = document.createElement('div');
   banner.className = 'w-100 mt-1';
   banner.id = 'approved-banner-' + fileUuid;
@@ -1146,7 +1150,7 @@ function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName, exp
       <span class="ms-2 text-muted" id="exec-countdown-${fileUuid}" style="font-size:.7rem"></span>
     </span>
     <button class="btn btn-success py-0 px-2" id="exec-btn-${fileUuid}" style="font-size:.72rem;line-height:1.7"
-      onclick="executeApproved('${fileUuid}','${actionType}','${token}',${reqId},'${safeFile}')">
+      onclick="executeApproved('${fileUuid}','${actionType}','${token}',${reqId},'${safeFile}',${encFlag})">
       <i class="bi bi-play-fill"></i> Execute Now
     </button>
   </div>`;
@@ -1155,10 +1159,14 @@ function _injectApprovedBanner(fileUuid, actionType, token, reqId, fileName, exp
   if (expiresAtIso) _startCountdown(fileUuid, expiresAtIso);
 }
 
-function executeApproved(uuid, action, token, reqId, fileName) {
+function executeApproved(uuid, action, token, reqId, fileName, isEncrypted) {
   _execUuid = uuid; _execAction = action; _execToken = token; _execReqId = reqId;
   if (action === 'download') {
-    window.location.href = '/download/' + uuid + '?token=' + encodeURIComponent(token);
+    if (isEncrypted) {
+      openDecrypt(uuid, fileName, token);
+    } else {
+      window.location.href = '/download/' + uuid + '?token=' + encodeURIComponent(token);
+    }
     return;
   }
   if (action === 'edit') {
@@ -1245,7 +1253,7 @@ if (typeof io !== 'undefined') {
     if (data.user_id != {{ current_user.id }}) return;
     if (data.status === 'approved') {
       showToast(`✅ Your ${data.action_type} request was approved! Check the file row below.`, 'success');
-      _injectApprovedBanner(data.file_uuid, data.action_type, data.token, data.request_id, '', data.expires_at || '');
+      _injectApprovedBanner(data.file_uuid, data.action_type, data.token, data.request_id, '', data.expires_at || '', data.is_encrypted || false);
     } else if (data.status === 'rejected') {
       showToast(`❌ ${data.action_type.charAt(0).toUpperCase()+data.action_type.slice(1)} request rejected — ${data.reason}`, 'danger');
     }

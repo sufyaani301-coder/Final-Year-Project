@@ -1354,8 +1354,6 @@ def decrypt_file(file_uuid):
             _log_file_access('download', rec, 'denied', 'No approved request or token expired')
             db.session.commit()
             return jsonify(success=False, error='No approved download request found or it has expired.'), 403
-        ar.status      = 'executed'
-        ar.executed_at = datetime.now(timezone.utc)
     locked, lock_msg = _check_pw_locked(current_user.id)
     if locked:
         return jsonify(success=False, error=lock_msg), 429
@@ -1367,6 +1365,9 @@ def decrypt_file(file_uuid):
         err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password. Use your FileVault login password.'
         return jsonify(success=False, error=err), 401
     _pw_attempts.pop(current_user.id, None)
+    if not current_user.is_admin:
+        ar.status      = 'executed'
+        ar.executed_at = datetime.now(timezone.utc)
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
     if not os.path.exists(file_path):
         return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
@@ -1791,14 +1792,15 @@ def admin_approve_action_request(req_id):
 
     # Notify user via SocketIO (real-time) and email
     socketio.emit('action_request_update', {
-        'request_id':  ar.id,
-        'status':      'approved',
-        'reason':      ar.admin_reason,
-        'token':       ar.exec_token,
-        'expires_at':  ar.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'user_id':     ar.requested_by_id,
-        'action_type': ar.action_type,
-        'file_uuid':   ar.file.uuid if ar.file else '',
+        'request_id':   ar.id,
+        'status':       'approved',
+        'reason':       ar.admin_reason,
+        'token':        ar.exec_token,
+        'expires_at':   ar.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'user_id':      ar.requested_by_id,
+        'action_type':  ar.action_type,
+        'file_uuid':    ar.file.uuid if ar.file else '',
+        'is_encrypted': bool(ar.file.is_encrypted) if ar.file else False,
     })
     _resend_email(
         ar.requested_by.email,
