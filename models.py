@@ -289,7 +289,9 @@ class ShareToken(db.Model):
 
     @property
     def is_expired(self):
-        return self.expires_at is not None and datetime.now(timezone.utc) > self.expires_at
+        if self.expires_at is None:
+            return False
+        return datetime.utcnow() > self.expires_at.replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------------------
