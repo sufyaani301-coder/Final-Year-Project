@@ -752,60 +752,85 @@ document.getElementById('renameConfirm')?.addEventListener('click', async () => 
 
 // ── Replace file content ──
 let _replaceUuid = null;
+let _replaceModal = null;
+
 document.getElementById('replaceInput')?.addEventListener('change', function() {
   document.getElementById('replaceChosen').textContent = this.files[0]?.name ? `Selected: ${this.files[0].name}` : '';
 });
+
+function _showReplaceError(msg) {
+  const el = document.getElementById('replacePasswordError');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function _hideReplaceError() {
+  document.getElementById('replacePasswordError').style.display = 'none';
+}
+
 function openReplace(uuid, fileName) {
   _replaceUuid = uuid;
   document.getElementById('replaceFileName').textContent = `"${fileName}"`;
   document.getElementById('replaceChosen').textContent = '';
   document.getElementById('replaceInput').value = '';
   document.getElementById('replacePassword').value = '';
-  document.getElementById('replacePasswordError').style.display = 'none';
-  new bootstrap.Modal(document.getElementById('replaceModal')).show();
+  _hideReplaceError();
+  if (!_replaceModal) {
+    _replaceModal = new bootstrap.Modal(document.getElementById('replaceModal'));
+  }
+  _replaceModal.show();
+  setTimeout(() => document.getElementById('replacePassword').focus(), 400);
 }
+
+document.getElementById('replacePassword')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('replaceConfirm').click();
+});
+
 document.getElementById('replaceConfirm')?.addEventListener('click', async () => {
   if (!_replaceUuid) return;
   const file = document.getElementById('replaceInput').files[0];
-  if (!file) { showToast('Please select a replacement file.', 'danger'); return; }
+  if (!file) { showToast('Please select a replacement file first.', 'danger'); return; }
   const pw = document.getElementById('replacePassword').value;
-  if (!pw) {
-    document.getElementById('replacePasswordError').textContent = 'Password is required.';
-    document.getElementById('replacePasswordError').style.display = '';
-    return;
-  }
-  document.getElementById('replacePasswordError').style.display = 'none';
+  if (!pw) { _showReplaceError('Password is required.'); return; }
+  _hideReplaceError();
+
   const btn = document.getElementById('replaceConfirm');
+  const origLabel = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Replacing…';
+
   const form = new FormData();
   form.append('csrf_token', CSRF);
   form.append('file', file);
   form.append('password', pw);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   let r, d;
   try {
-    r = await fetch(`/fim/replace/${_replaceUuid}`, { method:'POST', body:form, signal:controller.signal });
+    r = await fetch(`/fim/replace/${_replaceUuid}`, { method: 'POST', body: form, signal: controller.signal });
     clearTimeout(timeout);
     d = await r.json();
-  } catch(e) {
+  } catch (e) {
     clearTimeout(timeout);
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-file-earmark-arrow-up me-1"></i>Replace & Check Integrity';
-    bootstrap.Modal.getInstance(document.getElementById('replaceModal')).hide();
-    showToast(e.name === 'AbortError' ? 'Timed out after 30s — server is slow. Refresh and try Capture Baseline first.' : 'Network error.', 'danger');
+    btn.innerHTML = origLabel;
+    if (_replaceModal) _replaceModal.hide();
+    showToast(e.name === 'AbortError' ? 'Timed out after 30s — try again.' : 'Network error.', 'danger');
     return;
   }
+
   btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-file-earmark-arrow-up me-1"></i>Replace & Check Integrity';
+  btn.innerHTML = origLabel;
+
   if (r.status === 401) {
-    document.getElementById('replacePasswordError').textContent = d.error || 'Incorrect password.';
-    document.getElementById('replacePasswordError').style.display = '';
+    _showReplaceError(d.error || 'Incorrect password.');
     document.getElementById('replacePassword').value = '';
+    document.getElementById('replacePassword').focus();
     return;
   }
-  bootstrap.Modal.getInstance(document.getElementById('replaceModal')).hide();
+
+  if (_replaceModal) _replaceModal.hide();
+
   if (d.success) {
     const colour = d.status === 'tampered' ? 'danger' : d.status === 'skip' ? 'warning' : 'success';
     showToast(d.message || `Status: ${d.status}`, colour);
