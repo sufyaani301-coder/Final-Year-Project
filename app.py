@@ -2632,6 +2632,11 @@ def fim_replace_file(file_uuid):
     if not file_rec.monitoring_enabled:
         return jsonify(success=False, error='Monitoring disabled for this file'), 400
 
+    # Password confirmation required
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to replace this file.'), 401
+
     if 'file' not in request.files or request.files['file'].filename == '':
         return jsonify(success=False, error='No replacement file selected'), 400
     f = request.files['file']
@@ -2654,6 +2659,15 @@ def fim_replace_file(file_uuid):
         log_activity('tamper_simulation',
                      f'Replaced file content: "{file_rec.original_name}" — {result["status"]}')
         db.session.commit()
+        _notify(
+            f'File Replaced — {file_rec.original_name}',
+            f'File:         {file_rec.original_name}\n'
+            f'Replaced by:  {current_user.full_name} ({current_user.email})\n'
+            f'Result:       {result["status"].upper()}\n'
+            f'IP:           {_get_real_ip()}\n\n'
+            f'An integrity alert has been raised on the dashboard. '
+            f'Please acknowledge, resolve, or reset the baseline.',
+        )
     except Exception as exc:
         db.session.rollback()
         app.logger.error('fim_replace_file check error: %s', exc)
@@ -2739,6 +2753,11 @@ def edit_file_save(file_uuid):
         ar.status      = 'executed'
         ar.executed_at = datetime.now(timezone.utc)
 
+    # Password confirmation required from everyone
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password. Please confirm your FileVault password to save.'), 401
+
     ext = file_rec.original_name.rsplit('.', 1)[-1].lower() if '.' in file_rec.original_name else ''
     if ext not in EDITABLE_EXTENSIONS:
         return jsonify(success=False, error='File type not editable in browser'), 400
@@ -2762,25 +2781,48 @@ def edit_file_save(file_uuid):
     check_status  = 'ok'
     check_message = 'File saved successfully.'
     try:
-        # Authorized browser edit — update baseline so FIM doesn't flag it as tampering
+        # 1. Run integrity check BEFORE updating baseline — this detects the change
+        #    and raises a "File modified" alert that admin must acknowledge.
+        fim_result = _fim_check_file(file_rec,
+            triggered_by='user_edit',
+            triggered_by_user_id=current_user.id,
+        )
+        if fim_result['status'] not in ('ok', 'skip'):
+            _fim_raise_alert(file_rec, fim_result)
+            # Relabel the alert so admin knows it was an authorised edit, not a real tamper
+            open_alert = IntegrityAlert.query.filter_by(
+                file_id=file_rec.id, status='open'
+            ).order_by(IntegrityAlert.raised_at.desc()).first()
+            if open_alert:
+                open_alert.title       = f'File edited by {current_user.full_name}: {file_rec.original_name}'
+                open_alert.description = (
+                    f'Authorised browser edit via ActionRequest workflow.\n'
+                    f'Edited by: {current_user.full_name} ({current_user.email})\n'
+                    f'New size: {format_bytes(len(raw_data))}\n'
+                    f'Admin: please acknowledge this alert once reviewed.'
+                )
+
+        # 2. Now update the baseline so future auto-checks don't re-flag this edit
         _fim_capture_baseline(file_rec, current_user, reason='edit')
-        log_activity('upload', f'Edited "{file_rec.original_name}" in browser ({format_bytes(len(raw_data))})')
+        log_activity('edit', f'Edited "{file_rec.original_name}" in browser ({format_bytes(len(raw_data))})')
         _log_file_access('edit', file_rec, 'success',
                          f'Inline edit saved ({format_bytes(len(raw_data))})')
         db.session.commit()
-        check_message = 'File saved. Baseline updated to reflect authorized edit.'
+        check_message = 'File saved. Admin has been notified and must acknowledge the change.'
         _notify(
             f'File Modified — {file_rec.original_name}',
             f'File:        {file_rec.original_name}\n'
             f'New size:    {format_bytes(len(raw_data))}\n'
-            f'Edited by:   {current_user.full_name}\n'
-            f'IP:          {_get_real_ip()}',
+            f'Edited by:   {current_user.full_name} ({current_user.email})\n'
+            f'IP:          {_get_real_ip()}\n\n'
+            f'An alert has been raised on the dashboard. '
+            f'Please acknowledge it to confirm you have reviewed this change.',
         )
     except Exception as exc:
         db.session.rollback()
         app.logger.error('edit_file_save post-write error: %s', exc)
         try:
-            log_activity('upload', f'Edited "{file_rec.original_name}" in browser')
+            log_activity('edit', f'Edited "{file_rec.original_name}" in browser')
             db.session.commit()
         except Exception:
             db.session.rollback()

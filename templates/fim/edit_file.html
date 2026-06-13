@@ -35,7 +35,7 @@
             <a href="{{ url_for('fim_file_status', file_id=file.id) }}" class="btn btn-sm btn-outline-secondary">
               <i class="bi bi-x-lg me-1"></i>Cancel
             </a>
-            <button id="saveBtn" class="btn btn-sm btn-primary">
+            <button id="saveBtn" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#pwConfirmModal">
               <i class="bi bi-floppy me-1"></i>Save
             </button>
           </div>
@@ -108,7 +108,7 @@ const editor = CodeMirror(document.getElementById('editorWrap'), {
   autoCloseBrackets:true,
   tabSize:          2,
   indentWithTabs:   false,
-  extraKeys: { 'Ctrl-S': saveFile, 'Cmd-S': saveFile },
+  extraKeys: { 'Ctrl-S': () => document.getElementById('saveBtn').click(), 'Cmd-S': () => document.getElementById('saveBtn').click() },
 });
 editor.setSize('100%', '100%');
 
@@ -131,7 +131,7 @@ function showToast(msg, type = 'info') {
   el.addEventListener('hidden.bs.toast', () => el.remove());
 }
 
-async function saveFile() {
+async function saveFile(password) {
   const btn  = document.getElementById('saveBtn');
   const orig = btn.innerHTML;
   btn.disabled = true;
@@ -141,6 +141,7 @@ async function saveFile() {
   form.append('csrf_token', CSRF);
   form.append('content', editor.getValue());
   if (EDIT_TOKEN) form.append('edit_token', EDIT_TOKEN);
+  if (password)   form.append('password', password);
 
   try {
     const r = await fetch(`/file/${FILE_UUID}/edit`, { method: 'POST', body: form });
@@ -160,6 +161,45 @@ async function saveFile() {
   }
 }
 
-document.getElementById('saveBtn').addEventListener('click', saveFile);
+document.getElementById('saveBtn').addEventListener('click', () => {
+  document.getElementById('pwInput').value = '';
+  document.getElementById('pwError').style.display = 'none';
+});
+
+document.getElementById('pwConfirmSave')?.addEventListener('click', async () => {
+  const pw = document.getElementById('pwInput').value;
+  if (!pw) {
+    document.getElementById('pwError').textContent = 'Password is required.';
+    document.getElementById('pwError').style.display = '';
+    return;
+  }
+  bootstrap.Modal.getInstance(document.getElementById('pwConfirmModal'))?.hide();
+  await saveFile(pw);
+});
+
+document.getElementById('pwInput')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('pwConfirmSave').click();
+});
 </script>
+
+<!-- Password confirmation modal -->
+<div class="modal fade" id="pwConfirmModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h6 class="modal-title fw-bold"><i class="bi bi-lock-fill me-2 text-warning"></i>Confirm Save</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <p class="small text-muted mb-2">Enter your FileVault password to confirm this edit.</p>
+        <input type="password" id="pwInput" class="form-control form-control-sm" placeholder="Your password"/>
+        <div id="pwError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer border-0 pt-1">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-primary" id="pwConfirmSave"><i class="bi bi-floppy me-1"></i>Save</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
