@@ -142,13 +142,10 @@
                           onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','download')">
                     <i class="bi bi-download"></i>
                   </button>
-                  {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
-                  {% if _fext in ('txt','csv','json','xml') %}
                   <button class="btn btn-sm btn-outline-warning" title="Request edit"
                           onclick="openRequest('{{ f.uuid }}','{{ f.original_name | e }}','edit')">
                     <i class="bi bi-pencil-square"></i>
                   </button>
-                  {% endif %}
                 {% else %}
                   <span class="badge bg-danger d-flex align-items-center gap-1 px-2"
                         title="Your clearance (L{{ current_user.clearance_level }}) is insufficient for this file (L{{ f.classification }})">
@@ -211,6 +208,32 @@
                         onclick="ajaxDelete('{{ url_for('delete_file', file_uuid=f.uuid) }}', document.getElementById('row-{{ f.uuid }}'))">
                   <i class="bi bi-trash"></i>
                 </button>
+
+                {# ── Inline pending requests ── #}
+                {% set _pending = pending_by_file.get(f.id, []) %}
+                {% if _pending %}
+                <div class="w-100 mt-1">
+                  {% for ar in _pending %}
+                  <div class="d-flex align-items-center gap-1 rounded px-2 py-1 mb-1"
+                       style="background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.4);font-size:.75rem"
+                       id="ar-row-{{ ar.id }}">
+                    <i class="bi bi-clock-fill text-warning"></i>
+                    <span class="flex-grow-1 text-body">
+                      <strong>{{ ar.requested_by.full_name }}</strong> → {{ ar.action_label }}
+                    </span>
+                    <button class="btn btn-success py-0 px-2" style="font-size:.72rem;line-height:1.6"
+                            onclick="quickApprove({{ ar.id }})">
+                      <i class="bi bi-check-lg"></i> Approve
+                    </button>
+                    <button class="btn btn-danger py-0 px-2" style="font-size:.72rem;line-height:1.6"
+                            onclick="quickReject({{ ar.id }})">
+                      <i class="bi bi-x-lg"></i> Reject
+                    </button>
+                  </div>
+                  {% endfor %}
+                </div>
+                {% endif %}
+
               {% endif %}
 
               </div>
@@ -1093,5 +1116,44 @@ document.getElementById('reqSubmitBtn')?.addEventListener('click', async () => {
     document.getElementById('req-error').style.display = '';
   }
 });
+
+async function quickApprove(reqId) {
+  const reason = prompt('Optional note for approval (leave blank to approve with no note):');
+  if (reason === null) return; // user cancelled
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const fd = new FormData();
+  fd.append('csrf_token', csrf);
+  if (reason.trim()) fd.append('reason', reason.trim());
+  const r = await fetch(`/admin/action-requests/${reqId}/approve`, { method: 'POST', body: fd });
+  const d = await r.json();
+  if (d.success) {
+    const row = document.getElementById(`ar-row-${reqId}`);
+    if (row) row.remove();
+    showToast('Request approved — user notified.', 'success');
+  } else {
+    showToast(d.error || 'Approval failed.', 'danger');
+  }
+}
+
+async function quickReject(reqId) {
+  const reason = prompt('Rejection reason (required):');
+  if (!reason || !reason.trim()) {
+    if (reason !== null) showToast('Rejection reason is required.', 'warning');
+    return;
+  }
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const fd = new FormData();
+  fd.append('csrf_token', csrf);
+  fd.append('reason', reason.trim());
+  const r = await fetch(`/admin/action-requests/${reqId}/reject`, { method: 'POST', body: fd });
+  const d = await r.json();
+  if (d.success) {
+    const row = document.getElementById(`ar-row-${reqId}`);
+    if (row) row.remove();
+    showToast('Request rejected — user notified.', 'info');
+  } else {
+    showToast(d.error || 'Rejection failed.', 'danger');
+  }
+}
 </script>
 {% endblock %}

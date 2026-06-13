@@ -1710,7 +1710,7 @@ def admin_approve_action_request(req_id):
                      f'Approved by {current_user.full_name}: {reason}')
     db.session.commit()
 
-    # Notify user
+    # Notify user via SocketIO (real-time) and email
     socketio.emit('action_request_update', {
         'request_id':  ar.id,
         'status':      'approved',
@@ -1721,6 +1721,16 @@ def admin_approve_action_request(req_id):
         'action_type': ar.action_type,
         'file_uuid':   ar.file.uuid if ar.file else '',
     })
+    _resend_email(
+        ar.requested_by.email,
+        f'[FileVault] Your {ar.action_label} request was APPROVED',
+        f'Hello {ar.requested_by.full_name},\n\n'
+        f'Your request to {ar.action_label.lower()} "{ar.file.original_name if ar.file else "the file"}" '
+        f'has been APPROVED by the administrator.\n\n'
+        f'Note: {ar.admin_reason}\n\n'
+        f'You have 30 minutes to execute the action. Log in to FileVault now.\n\n'
+        f'--- FileVault',
+    )
     return jsonify(success=True, message='Request approved. User notified with execution token.')
 
 
@@ -1751,6 +1761,16 @@ def admin_reject_action_request(req_id):
         'reason':     reason,
         'user_id':    ar.requested_by_id,
     })
+    _resend_email(
+        ar.requested_by.email,
+        f'[FileVault] Your {ar.action_label} request was REJECTED',
+        f'Hello {ar.requested_by.full_name},\n\n'
+        f'Your request to {ar.action_label.lower()} "{ar.file.original_name if ar.file else "the file"}" '
+        f'has been REJECTED by the administrator.\n\n'
+        f'Reason: {reason}\n\n'
+        f'You may submit a new request with a revised justification if needed.\n\n'
+        f'--- FileVault',
+    )
     return jsonify(success=True, message='Request rejected. User notified.')
 
 
@@ -2166,6 +2186,18 @@ def fim_monitoring():
 
     policies  = MonitoringPolicy.query.filter_by(is_active=True).all()
 
+    # Build pending ActionRequests per file for admin approve/reject buttons
+    file_ids = [f.id for f in pagination.items]
+    pending_requests = []
+    if current_user.is_admin and file_ids:
+        pending_requests = ActionRequest.query.filter(
+            ActionRequest.file_id.in_(file_ids),
+            ActionRequest.status == 'pending',
+        ).all()
+    pending_by_file = {}
+    for ar in pending_requests:
+        pending_by_file.setdefault(ar.file_id, []).append(ar)
+
     return render_template('fim/monitoring.html',
         files=pagination.items,
         pagination=pagination,
@@ -2174,6 +2206,7 @@ def fim_monitoring():
         sort=sort,
         order=order,
         policies=policies,
+        pending_by_file=pending_by_file,
     )
 
 
