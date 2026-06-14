@@ -92,6 +92,27 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js"></script>
 
+<!-- Password confirmation modal (must be before the <script> block so getElementById finds it) -->
+<div class="modal fade" id="pwConfirmModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h6 class="modal-title fw-bold"><i class="bi bi-lock-fill me-2 text-warning"></i>Confirm Save</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <p class="small text-muted mb-2">Enter your FileVault password to confirm this edit.</p>
+        <input type="password" id="pwInput" class="form-control form-control-sm" placeholder="Your password"/>
+        <div id="pwError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer border-0 pt-1">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-primary" id="pwConfirmSave"><i class="bi bi-floppy me-1"></i>Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <style>
 .CodeMirror {
   height: 100%;
@@ -215,25 +236,4 @@ document.getElementById('pwInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('pwConfirmSave').click();
 });
 </script>
-
-<!-- Password confirmation modal -->
-<div class="modal fade" id="pwConfirmModal" tabindex="-1">
-  <div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header border-0 pb-0">
-        <h6 class="modal-title fw-bold"><i class="bi bi-lock-fill me-2 text-warning"></i>Confirm Save</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body pt-2">
-        <p class="small text-muted mb-2">Enter your FileVault password to confirm this edit.</p>
-        <input type="password" id="pwInput" class="form-control form-control-sm" placeholder="Your password"/>
-        <div id="pwError" class="text-danger small mt-1" style="display:none"></div>
-      </div>
-      <div class="modal-footer border-0 pt-1">
-        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-sm btn-primary" id="pwConfirmSave"><i class="bi bi-floppy me-1"></i>Save</button>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
