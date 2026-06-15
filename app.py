@@ -70,7 +70,7 @@ if _secret == 'dev-key-change-in-production':
     )
 app.config['SECRET_KEY'] = _secret
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///vault.db')
-if _db_url.startswith('postgres://'):          # Render gives postgres://, SQLAlchemy needs postgresql://
+if _db_url.startswith('postgres://'):          # Railway gives postgres://, SQLAlchemy needs postgresql://
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
