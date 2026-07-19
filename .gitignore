@@ -1,56 +1,7 @@
-# Secrets & environment
-.env
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-instance/
-
-# Uploaded user files (never commit real uploads)
-vault_uploads/
-
-# Python cache
 __pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-
-# Virtual environments
+*.pyc
+.env
 venv/
-env/
-.venv/
-.env/
-
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
-
-# IDE
-.vscode/
-.idea/
-
-# Migrations (optional — keep if you want DB history)
-# migrations/
-
-# Logs
-*.log
-
-# OS
+instance/
 .DS_Store
-Thumbs.db
-
-# Railway
-.railway/
-
-# Claude Code internal files
-.claude/
-
-# Local scripts & generated docs (not part of the app)
-generate_doc.py
-generate_doc2.py
-generate_dissertation.py
-FileVault_Dissertation.docx
-*.docx
+*.db
