@@ -103,13 +103,14 @@ app.config['RESEND_FROM'] = os.environ.get('RESEND_FROM', 'FileVault <onboarding
 # rp_id must be a bare hostname (no scheme/path/port) per the WebAuthn spec, but
 # this env var has occasionally been misconfigured with a full URL — tolerate that.
 def _webauthn_rp_id(raw):
+    raw = raw.strip()
     if '://' in raw or '/' in raw:
         return urlparse(raw if '://' in raw else f'//{raw}').hostname or raw
     return raw
 
 WEBAUTHN_RP_ID     = _webauthn_rp_id(os.environ.get('WEBAUTHN_RP_ID', 'localhost'))
 WEBAUTHN_RP_NAME   = 'FileVault'
-WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN', 'http://localhost:5000')
+WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN', 'http://localhost:5000').strip()
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
