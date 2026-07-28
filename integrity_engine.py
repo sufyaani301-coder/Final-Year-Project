@@ -187,8 +187,12 @@ def capture_baseline(file_rec, user, reason: str = 'upload'):
     db.session.add(baseline)
 
     # Stamp the file record
+    now = datetime.now(timezone.utc)
+    policy   = file_rec.policy
+    interval = policy.check_interval_mins if policy else 60
     file_rec.current_status  = 'ok'
-    file_rec.last_checked_at = datetime.now(timezone.utc)
+    file_rec.last_checked_at = now
+    file_rec.next_check_at   = now + timedelta(minutes=interval)
     file_rec.file_hash       = hex_digest  # keep legacy column in sync
 
     return baseline
