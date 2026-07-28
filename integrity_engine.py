@@ -220,7 +220,13 @@ def check_single_file(file_id: int, triggered_by: str = 'scheduler',
         file_id=file_id, is_current=True
     ).first()
     if not baseline:
-        return {'status': 'skip', 'reason': 'no_baseline'}
+        # No baseline ever captured for this monitored file (e.g. baseline
+        # capture failed at upload time) — self-heal instead of skipping
+        # forever, so the file actually enters the check cycle.
+        baseline = capture_baseline(file_rec, None, reason='auto_backfill')
+        if not baseline:
+            return {'status': 'skip', 'reason': 'no_baseline'}
+        db.session.flush()
 
     filepath = os.path.join(flask_app.config['UPLOAD_FOLDER'], file_rec.stored_name)
 
