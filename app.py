@@ -100,7 +100,14 @@ app.config['NOTIFICATION_EMAIL'] = os.environ.get('NOTIFICATION_EMAIL', '')
 app.config['RESEND_FROM'] = os.environ.get('RESEND_FROM', 'FileVault <onboarding@resend.dev>')
 
 # WebAuthn / FIDO2
-WEBAUTHN_RP_ID     = os.environ.get('WEBAUTHN_RP_ID',     'localhost')
+# rp_id must be a bare hostname (no scheme/path/port) per the WebAuthn spec, but
+# this env var has occasionally been misconfigured with a full URL — tolerate that.
+def _webauthn_rp_id(raw):
+    if '://' in raw or '/' in raw:
+        return urlparse(raw if '://' in raw else f'//{raw}').hostname or raw
+    return raw
+
+WEBAUTHN_RP_ID     = _webauthn_rp_id(os.environ.get('WEBAUTHN_RP_ID', 'localhost'))
 WEBAUTHN_RP_NAME   = 'FileVault'
 WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN', 'http://localhost:5000')
 
