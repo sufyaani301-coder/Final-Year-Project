@@ -1438,8 +1438,20 @@ def preview_file(file_uuid):
     if not session.pop(f'pv_{file_uuid}', False):
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
-    return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
-                               mimetype=rec.mimetype or 'application/octet-stream')
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+    if not os.path.exists(file_path):
+        abort(404)
+    with open(file_path, 'rb') as fh:
+        data = fh.read()
+    if rec.is_encrypted:
+        if not _enc_key_raw:
+            abort(500)
+        try:
+            data = _file_fernet(rec.stored_name).decrypt(data)
+        except Exception:
+            abort(500)
+    from io import BytesIO
+    return send_file(BytesIO(data), mimetype=rec.mimetype or 'application/octet-stream')
 
 
 @app.route('/delete/<file_uuid>', methods=['POST'])
