@@ -1451,7 +1451,12 @@ def preview_file(file_uuid):
         except Exception:
             abort(500)
     from io import BytesIO
-    return send_file(BytesIO(data), mimetype=rec.mimetype or 'application/octet-stream')
+    ext = rec.original_name.rsplit('.', 1)[-1].lower() if '.' in rec.original_name else ''
+    if ext in EDITABLE_EXTENSIONS:
+        mimetype = 'text/plain; charset=utf-8'
+    else:
+        mimetype = rec.mimetype or 'application/octet-stream'
+    return send_file(BytesIO(data), mimetype=mimetype)
 
 
 @app.route('/delete/<file_uuid>', methods=['POST'])

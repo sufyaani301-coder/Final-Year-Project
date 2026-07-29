@@ -141,14 +141,22 @@
             </td>
             <td>
               <div class="d-flex gap-1 flex-wrap">
+              {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
+              {% set _previewable = _fext in ('png','jpg','jpeg','gif','bmp','webp','pdf','txt','csv','tsv','log','md','rst','json','xml','yaml','yml','toml','ini','cfg','conf','env','html','htm','css','js','ts','jsx','tsx','py','sh','bash','sql','php','rb','java','c','cpp','h','rs','go','swift','kt') %}
 
               {% if not current_user.is_admin %}
                 {# ── Non-admin: view + clearance indicator + request buttons ── #}
                 {% set _can_access = current_user.can_view_file(f) %}
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
                    class="btn btn-sm btn-outline-secondary" title="View details">
-                  <i class="bi bi-eye"></i>
+                  <i class="bi bi-info-circle"></i>
                 </a>
+                {% if _can_access and _previewable %}
+                <button class="btn btn-sm btn-outline-secondary" title="Preview content"
+                        onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                  <i class="bi bi-eye"></i>
+                </button>
+                {% endif %}
                 {% if _can_access %}
                   {% if f.current_status == 'pending' %}
                   <button class="btn btn-sm btn-outline-success" title="Capture baseline"
@@ -217,8 +225,14 @@
                 {% endif %}
                 <a href="{{ url_for('fim_file_status', file_id=f.id) }}"
                    class="btn btn-sm btn-outline-secondary" title="View details">
-                  <i class="bi bi-eye"></i>
+                  <i class="bi bi-info-circle"></i>
                 </a>
+                {% if _previewable %}
+                <button class="btn btn-sm btn-outline-secondary" title="Preview content"
+                        onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                  <i class="bi bi-eye"></i>
+                </button>
+                {% endif %}
                 {% if f.is_encrypted %}
                 <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
                         onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
@@ -230,7 +244,6 @@
                   <i class="bi bi-download"></i>
                 </a>
                 {% endif %}
-                {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
                 {% if _fext in ('txt','csv','tsv','log','md','rst','json','xml','yaml','yml','toml','ini','cfg','conf','env','html','htm','css','js','ts','jsx','tsx','py','sh','bash','sql','php','rb','java','c','cpp','h','rs','go','swift','kt') %}
                 <a href="{{ url_for('edit_file_page', file_uuid=f.uuid) }}"
                    class="btn btn-sm btn-outline-info" title="Edit in browser">
@@ -628,6 +641,35 @@
         <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button class="btn btn-sm btn-success" id="execConfirmBtn">
           <i class="bi bi-check-lg me-1"></i>Execute
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal fade" id="previewModal" tabindex="-1" aria-labelledby="previewModalLabel">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="previewModalLabel">
+          <i class="bi bi-eye me-2 text-secondary"></i>Preview
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">
+          Enter your FileVault password to preview
+          <strong id="previewFileName"></strong>.
+        </p>
+        <input type="password" id="previewPassword" class="form-control form-control-sm"
+               placeholder="Your login password" autocomplete="current-password"/>
+        <div id="previewError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="previewConfirm">
+          <i class="bi bi-eye me-1"></i>Preview
         </button>
       </div>
     </div>
@@ -1116,6 +1158,60 @@ document.getElementById('decryptConfirm')?.addEventListener('click', async () =>
 });
 document.getElementById('decryptPassword')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('decryptConfirm').click();
+});
+
+// ── Preview ──
+let _previewUuid = null, _previewName = null;
+function openPreview(fileUuid, fileName) {
+  _previewUuid = fileUuid;
+  _previewName = fileName;
+  document.getElementById('previewFileName').textContent = fileName;
+  document.getElementById('previewPassword').value = '';
+  document.getElementById('previewError').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('previewModal')).show();
+  setTimeout(() => document.getElementById('previewPassword').focus(), 300);
+}
+document.getElementById('previewConfirm')?.addEventListener('click', async () => {
+  const password = document.getElementById('previewPassword').value;
+  const errEl    = document.getElementById('previewError');
+  const btn      = document.getElementById('previewConfirm');
+  if (!password) { errEl.textContent = 'Please enter your password.'; errEl.style.display = ''; return; }
+  errEl.style.display = 'none';
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading…';
+  // Open the tab synchronously (before the await) so browsers don't block it as a popup.
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(`/preview-auth/${_previewUuid}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': CSRF,
+      },
+      body: JSON.stringify({ password }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.success) {
+      if (win) win.close();
+      errEl.textContent = d.error || 'Preview failed.';
+      errEl.style.display = '';
+      btn.disabled = false; btn.innerHTML = origHtml;
+      return;
+    }
+    if (win) win.location.href = d.preview_url;
+    else window.open(d.preview_url, '_blank');
+    bootstrap.Modal.getInstance(document.getElementById('previewModal')).hide();
+  } catch(e) {
+    if (win) win.close();
+    errEl.textContent = 'Network error — please try again.';
+    errEl.style.display = '';
+  }
+  btn.disabled = false; btn.innerHTML = origHtml;
+});
+document.getElementById('previewPassword')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('previewConfirm').click();
 });
 
 // ── Execute Approved Action ──────────────────────────────────────────────────
