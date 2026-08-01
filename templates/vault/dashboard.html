@@ -29,7 +29,7 @@
     <div class="alert d-flex align-items-center justify-content-between gap-3 mb-4" style="background:rgba(13,202,240,.12);border:1px solid rgba(13,202,240,.4)">
       <div class="d-flex align-items-center gap-2">
         <i class="bi bi-envelope-exclamation fs-5"></i>
-        <span>Please verify your email address before uploading or accessing files. Check your inbox for the verification link.</span>
+        <span>Your email address isn't verified yet. Check your inbox for the verification link, or resend it below.</span>
       </div>
       <button class="btn btn-sm btn-outline-info flex-shrink-0" id="resendBtn" onclick="resendVerification()">Resend email</button>
     </div>
@@ -50,8 +50,7 @@
     <!-- Upload -->
     <div class="chart-card mb-4">
       <div class="chart-card-title mb-3"><i class="bi bi-cloud-upload me-1"></i>Upload a file</div>
-      <div class="upload-dropzone {% if not current_user.email_verified %}opacity-50{% endif %}" id="dropZone"
-           style="{% if not current_user.email_verified %}pointer-events:none{% endif %}">
+      <div class="upload-dropzone" id="dropZone">
         <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2 upload-icon"></i>
         <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
         <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="document.getElementById('fileInput').click()">Browse file</button>
@@ -68,8 +67,7 @@
       </div>
       <div class="d-flex justify-content-between align-items-center mt-3">
         <small class="text-muted">Images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small>
-        <button type="button" class="btn btn-primary btn-sm" id="uploadBtn" onclick="startUpload()"
-                {% if not current_user.email_verified %}disabled{% endif %}>
+        <button type="button" class="btn btn-primary btn-sm" id="uploadBtn" onclick="startUpload()">
           <i class="bi bi-upload me-1"></i>Upload
         </button>
       </div>

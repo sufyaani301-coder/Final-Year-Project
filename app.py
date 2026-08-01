@@ -1223,8 +1223,6 @@ def vault_upload():
         flash(msg, 'warning')
         return redirect(url_for('vault_dashboard'))
 
-    if not current_user.email_verified:
-        return err('Please verify your email address before uploading files.', 403)
     if 'file' not in request.files or request.files['file'].filename == '':
         return err('No file selected.')
     f = request.files['file']
@@ -1284,9 +1282,6 @@ def vault_download(file_uuid):
     if not current_user.is_personal:
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
-    if not current_user.email_verified:
-        flash('Please verify your email address first.', 'warning')
-        return redirect(url_for('vault_dashboard'))
     if rec.is_encrypted:
         flash('This file is encrypted. Use the "Decrypt & Download" button to access it securely.', 'warning')
         return redirect(url_for('vault_dashboard'))
@@ -1303,8 +1298,6 @@ def vault_decrypt(file_uuid):
     if not current_user.is_personal:
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
-    if not current_user.email_verified:
-        return jsonify(success=False, error='Please verify your email address first.'), 403
     locked, lock_msg = _check_pw_locked(current_user.id)
     if locked:
         return jsonify(success=False, error=lock_msg), 429
@@ -1341,8 +1334,6 @@ def vault_preview_auth(file_uuid):
     if not current_user.is_personal:
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
-    if not current_user.email_verified:
-        return jsonify(success=False, error='Please verify your email address first.'), 403
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     if not password or not current_user.check_password(password):
@@ -1359,8 +1350,6 @@ def vault_delete(file_uuid):
         abort(403)
     rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-    if not current_user.email_verified:
-        return (jsonify(success=False, error='Please verify your email address first.'), 403) if is_ajax else abort(403)
     locked, lock_msg = _check_pw_locked(current_user.id)
     if locked:
         return (jsonify(success=False, error=lock_msg), 429) if is_ajax else abort(429)
