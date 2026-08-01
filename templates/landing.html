@@ -2,9 +2,13 @@
 {% block title %}FileVault — Choose your workspace{% endblock %}
 
 {% block body %}
-<div class="d-flex flex-column min-vh-100" style="background:var(--surface-alt,#0d1117)">
+<div class="landing-bg d-flex flex-column min-vh-100">
+  <div class="landing-grid"></div>
+  <div class="landing-glow landing-glow-1"></div>
+  <div class="landing-glow landing-glow-2"></div>
+  <div class="landing-glow landing-glow-3"></div>
 
-  <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4">
+  <div class="landing-content flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4">
     <div class="text-center mb-5">
       <div class="d-inline-flex align-items-center gap-2 mb-3" style="font-size:1.6rem;font-weight:800;color:#fff">
         <i class="bi bi-shield-lock-fill" style="color:#0d6efd"></i>FileVault
@@ -51,7 +55,7 @@
     </div>
   </div>
 
-  <div class="text-center pb-4">
+  <div class="landing-content text-center pb-4">
     <span class="text-white-50 small">
       Don't have an account?
       <a href="{{ url_for('vault_register') }}" class="text-white fw-semibold">Create a Personal Vault</a>
@@ -63,6 +67,76 @@
 </div>
 
 <style>
+.landing-bg {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(13,110,253,.16), transparent 60%),
+    linear-gradient(180deg, #05070d 0%, #0a0f1c 45%, #060911 100%);
+}
+.landing-content { position: relative; z-index: 2; }
+
+/* Faint blueprint-style grid, slowly panning */
+.landing-grid {
+  position: absolute; inset: -2px;
+  background-image:
+    linear-gradient(rgba(148,163,184,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,184,.06) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(ellipse 75% 75% at 50% 40%, #000 40%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 75% at 50% 40%, #000 40%, transparent 85%);
+  animation: landing-pan 40s linear infinite;
+  z-index: 0;
+}
+@keyframes landing-pan {
+  from { background-position: 0 0; }
+  to   { background-position: 84px 84px; }
+}
+
+/* Soft drifting glow orbs */
+.landing-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: .35;
+  z-index: 1;
+  pointer-events: none;
+}
+.landing-glow-1 {
+  width: 480px; height: 480px;
+  background: #0d6efd;
+  top: -140px; left: -120px;
+  animation: landing-drift-1 22s ease-in-out infinite;
+}
+.landing-glow-2 {
+  width: 380px; height: 380px;
+  background: #6f42c1;
+  bottom: -120px; right: -100px;
+  animation: landing-drift-2 26s ease-in-out infinite;
+}
+.landing-glow-3 {
+  width: 300px; height: 300px;
+  background: #0dcaf0;
+  top: 40%; right: 12%;
+  opacity: .18;
+  animation: landing-drift-3 30s ease-in-out infinite;
+}
+@keyframes landing-drift-1 {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(60px, 40px); }
+}
+@keyframes landing-drift-2 {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(-50px, -30px); }
+}
+@keyframes landing-drift-3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(-30px, 25px) scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-grid, .landing-glow-1, .landing-glow-2, .landing-glow-3 { animation: none; }
+}
+
 .landing-card {
   background: rgba(255,255,255,.04);
   border: 1px solid rgba(255,255,255,.1);
