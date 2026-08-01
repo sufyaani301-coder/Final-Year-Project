@@ -84,6 +84,9 @@ class User(UserMixin, db.Model):
     # 'enterprise' = org-wide FIM system (admin uploads, clearance, approvals);
     # 'personal'   = self-service vault where a user monitors only their own files
     account_type           = db.Column(db.String(20), nullable=False, default='enterprise')
+    # Personal Vault only: owner-controlled consent flag letting an Enterprise
+    # admin view/support their vault. False = admins have no access at all.
+    admin_access_granted   = db.Column(db.Boolean, nullable=False, default=False)
 
     files          = db.relationship('File', backref='owner', lazy=True,
                                      foreign_keys='File.user_id',

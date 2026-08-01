@@ -766,6 +766,9 @@ _PERSONAL_ALLOWED_ENDPOINTS = {
     'vault_preview_auth', 'vault_delete', 'vault_resend_verification',
     'vault_login', 'vault_register', 'preview_file', 'auth_logout',
     'verify_email', 'index', 'static',
+    # Account settings — same profile page/actions Enterprise users get
+    'profile', 'activity_log', 'mfa_setup', 'mfa_disable',
+    'webauthn_register_begin', 'webauthn_register_complete', 'webauthn_disable',
 }
 
 
@@ -1437,6 +1440,14 @@ def profile():
             log_activity('profile', 'Updated notification settings')
             db.session.commit()
             flash('Notification settings saved.', 'success')
+
+        elif action == 'update_admin_access':
+            if current_user.is_personal:
+                granted = request.form.get('admin_access_granted') == '1'
+                current_user.admin_access_granted = granted
+                log_activity('profile', f'{"Granted" if granted else "Revoked"} admin support access to Personal Vault')
+                db.session.commit()
+                flash(f'Administrator access {"granted" if granted else "revoked"}.', 'success')
 
         return redirect(url_for('profile'))
 
@@ -2568,6 +2579,106 @@ def set_clearance(user_id):
     db.session.commit()
     flash(f'Clearance of {user.full_name} set to L{level} {user.clearance_label}.', 'success')
     return redirect(url_for('admin_panel'))
+
+
+# ---------------------------------------------------------------------------
+# Admin support access into a Personal Vault — only reachable if the vault
+# owner has explicitly granted it (User.admin_access_granted). View + decrypt
+# only, no delete/upload: consent implies support access, not custody.
+# ---------------------------------------------------------------------------
+def _admin_vault_target(user_id):
+    if not current_user.is_admin:
+        abort(403)
+    target = db.session.get(User, user_id) or abort(404)
+    if not target.is_personal or not target.admin_access_granted:
+        abort(403)
+    return target
+
+
+@app.route('/admin/vault/<int:user_id>')
+@login_required
+def admin_vault_view(user_id):
+    if not current_user.is_admin:
+        abort(403)
+    target = db.session.get(User, user_id) or abort(404)
+    if not target.is_personal or not target.admin_access_granted:
+        flash('This user has not granted administrator access to their Personal Vault.', 'warning')
+        return redirect(url_for('admin_panel'))
+
+    files = File.query.filter_by(user_id=target.id).order_by(File.uploaded_at.desc()).all()
+    used  = sum(f.size for f in files)
+    quota = app.config['STORAGE_QUOTA_BYTES']
+    log_activity('profile', f'Viewed Personal Vault of {target.full_name} ({target.email}) as admin')
+    db.session.commit()
+
+    return render_template('admin/vault_view.html',
+        target=target, files=files,
+        used_human=format_bytes(used), quota_human=format_bytes(quota),
+        previewable_exts=PREVIEWABLE_EXTENSIONS,
+    )
+
+
+@app.route('/admin/vault/<int:user_id>/decrypt/<file_uuid>', methods=['POST'])
+@login_required
+@limiter.limit('5 per minute')
+def admin_vault_decrypt(user_id, file_uuid):
+    target = _admin_vault_target(user_id)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=target.id).first_or_404()
+
+    locked, lock_msg = _check_pw_locked(current_user.id)
+    if locked:
+        return jsonify(success=False, error=lock_msg), 429
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email,
+                                     f'Admin decrypt "{rec.original_name}" (vault of {target.email})')
+        err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password.'
+        return jsonify(success=False, error=err), 401
+    _pw_attempts.pop(current_user.id, None)
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+    if not os.path.exists(file_path):
+        return jsonify(success=False, error='File not found on server.'), 404
+    with open(file_path, 'rb') as fh:
+        data = fh.read()
+    if rec.is_encrypted:
+        if not _enc_key_raw:
+            return jsonify(success=False, error='Encryption key not configured on server.'), 500
+        try:
+            data = _file_fernet(rec.stored_name).decrypt(data)
+        except Exception:
+            return jsonify(success=False, error='Decryption failed — file may be corrupted or key mismatch.'), 500
+
+    log_activity('download', f'Admin decrypted "{rec.original_name}" from Personal Vault of {target.email}')
+    _notify(
+        f'Admin Vault Access — {target.full_name}',
+        f'Admin:  {current_user.full_name} ({current_user.email})\n'
+        f'Vault:  {target.full_name} ({target.email})\n'
+        f'File:   {rec.original_name}\n'
+        f'Action: Decrypt & Download\n'
+        f'IP:     {_get_real_ip()}',
+    )
+    db.session.commit()
+    from io import BytesIO
+    return send_file(BytesIO(data), as_attachment=True, download_name=rec.original_name,
+                     mimetype=rec.mimetype or 'application/octet-stream')
+
+
+@app.route('/admin/vault/<int:user_id>/preview-auth/<file_uuid>', methods=['POST'])
+@login_required
+@limiter.limit('10 per minute')
+def admin_vault_preview_auth(user_id, file_uuid):
+    target = _admin_vault_target(user_id)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=target.id).first_or_404()
+
+    data = request.get_json(silent=True) or {}
+    password = data.get('password', '')
+    if not password or not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password.'), 401
+    session[f'pv_{file_uuid}'] = True
+    log_activity('preview', f'Admin previewed "{rec.original_name}" from Personal Vault of {target.email}')
+    db.session.commit()
+    return jsonify(success=True, preview_url=url_for('preview_file', file_uuid=file_uuid))
 
 
 @app.route('/verify/<file_uuid>')
