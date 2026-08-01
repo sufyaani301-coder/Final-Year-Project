@@ -221,10 +221,17 @@ async function resendVerification() {
   form.append('csrf_token', CSRF);
   try {
     const r = await fetch('{{ url_for("vault_resend_verification") }}', { method: 'POST', body: form });
-    const d = await r.json();
+    let d;
+    try {
+      d = await r.json();
+    } catch (parseErr) {
+      showToast(`Server error (HTTP ${r.status}) — not a JSON response. Check Railway logs.`, 'danger');
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
     showToast(d.message || d.error, d.success ? 'success' : 'danger');
   } catch(e) {
-    showToast('Network error — please try again.', 'danger');
+    showToast('Network error — could not reach the server. Please try again.', 'danger');
   }
   btn.disabled = false;
   btn.textContent = orig;
