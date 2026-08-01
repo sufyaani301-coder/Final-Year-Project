@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block title %}Personal Vault — Create Account{% endblock %}
+
+{% block body %}
+<div class="auth-wrapper d-flex min-vh-100">
+
+  <!-- Left panel -->
+  <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
+    <div class="logo d-flex align-items-center gap-2">
+      <i class="bi bi-person-lock"></i>FileVault
+    </div>
+    <div class="position-relative" style="z-index:1">
+      <div class="mb-3" style="font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.45);font-weight:600">Personal Vault</div>
+      <h2 class="fw-bold mb-3" style="font-size:2rem;letter-spacing:-.03em;line-height:1.15">Start your<br>own vault.</h2>
+      <p style="color:rgba(255,255,255,.6);line-height:1.7;max-width:320px">Any email works. Verify it once, and your files are encrypted and monitored from the moment you upload.</p>
+    </div>
+    <div class="feature-pills d-flex flex-wrap gap-2">
+      <span class="badge rounded-pill"><i class="bi bi-shield-check me-1"></i>Encrypted</span>
+      <span class="badge rounded-pill"><i class="bi bi-eye me-1"></i>Monitored</span>
+      <span class="badge rounded-pill"><i class="bi bi-lock me-1"></i>Private</span>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="auth-form-panel d-flex align-items-center justify-content-center flex-grow-1 p-4">
+    <div class="auth-card w-100" style="max-width:440px">
+
+      <div class="text-center mb-4">
+        <div class="auth-icon mx-auto mb-3"><i class="bi bi-person-plus-fill"></i></div>
+        <h4 class="fw-bold">Create your Personal Vault</h4>
+        <p class="text-muted small">Free — any email address works</p>
+      </div>
+
+      <form method="POST" action="{{ url_for('vault_register') }}" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="regFullName">Full name</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-person"></i></span>
+            <input type="text" name="full_name" id="regFullName" class="form-control" placeholder="Jane Doe"
+                   required autofocus value="{{ request.form.get('full_name','') }}"/>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="regEmail">Email address</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+            <input type="email" name="email" id="regEmail" class="form-control" placeholder="you@example.com"
+                   required value="{{ request.form.get('email','') }}"/>
+          </div>
+          <small class="text-muted">We'll send a verification link — you'll need to confirm it before uploading files.</small>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="pwdField">Password <span class="text-muted fw-normal">(8+ chars, uppercase, number, symbol)</span></label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" name="password" id="pwdField" class="form-control"
+                   placeholder="••••••••" required minlength="8"
+                   oninput="checkStrength(this.value)"/>
+            <button type="button" class="btn btn-outline-secondary" onclick="togglePwd('pwdField',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+          <div class="progress mt-2" style="height:4px">
+            <div id="pwdBar" class="progress-bar" style="width:0%;transition:width .3s"></div>
+          </div>
+          <small id="pwdHint" class="text-muted"></small>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold" for="confirmField">Confirm password</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+            <input type="password" name="confirm_password" id="confirmField" class="form-control"
+                   placeholder="••••••••" required/>
+            <button type="button" class="btn btn-outline-secondary" onclick="togglePwd('confirmField',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 fw-semibold py-2 mt-1" style="font-size:.95rem">
+          <i class="bi bi-person-check me-2"></i>Create Vault
+        </button>
+      </form>
+
+      <div class="divider-text my-4">or</div>
+      <p class="text-center text-muted small mb-2">
+        Already have a Personal Vault?
+        <a href="{{ url_for('vault_login') }}" class="fw-semibold text-decoration-none">Sign in</a>
+      </p>
+      <p class="text-center text-muted small mb-0">
+        <a href="{{ url_for('index') }}" class="text-decoration-none"><i class="bi bi-arrow-left me-1"></i>Back to workspace selection</a>
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function togglePwd(id, btn) {
+  const f = document.getElementById(id);
+  const isText = f.type === 'text';
+  f.type = isText ? 'password' : 'text';
+  btn.querySelector('i').className = isText ? 'bi bi-eye' : 'bi bi-eye-slash';
+}
+
+function checkStrength(val) {
+  const bar = document.getElementById('pwdBar');
+  const hint = document.getElementById('pwdHint');
+  let score = 0;
+  if (val.length >= 8) score++;
+  if (/[A-Z]/.test(val)) score++;
+  if (/\d/.test(val)) score++;
+  if (/[^A-Za-z0-9]/.test(val)) score++;
+  const levels = [
+    { w: '25%', cls: 'bg-danger',   label: 'Weak' },
+    { w: '50%', cls: 'bg-warning',  label: 'Fair' },
+    { w: '75%', cls: 'bg-info',     label: 'Good' },
+    { w: '100%',cls: 'bg-success',  label: 'Strong' },
+  ];
+  const lvl = levels[Math.max(0, score - 1)] || levels[0];
+  bar.style.width = val.length ? lvl.w : '0%';
+  bar.className = `progress-bar ${val.length ? lvl.cls : ''}`;
+  hint.textContent = val.length ? lvl.label : '';
+}
+
+document.querySelectorAll('.toast').forEach(t => {
+  setTimeout(() => bootstrap.Toast.getOrCreateInstance(t).hide(), 4000);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,427 @@
+{% extends 'base.html' %}
+{% block title %}Personal Vault{% endblock %}
+
+{% block body %}
+<div style="min-height:100vh;background:var(--bg)">
+
+  <!-- Top bar -->
+  <nav class="d-flex align-items-center px-4 py-3 gap-3" style="background:var(--surface);border-bottom:1px solid var(--border)">
+    <div class="d-flex align-items-center gap-2 fw-bold" style="font-size:1.15rem">
+      <i class="bi bi-person-lock text-primary"></i>Personal Vault
+    </div>
+    <div class="flex-grow-1"></div>
+    <button class="theme-toggle border-0"><i class="bi bi-moon-fill"></i></button>
+    <div class="d-flex align-items-center gap-2">
+      <div class="avatar-circle-sm">{{ current_user.initials }}</div>
+      <div class="small">
+        <div class="fw-semibold">{{ current_user.full_name }}</div>
+        <div class="text-muted" style="font-size:.75rem">{{ current_user.email }}</div>
+      </div>
+    </div>
+    <a href="{{ url_for('auth_logout') }}" class="btn btn-sm btn-outline-secondary" title="Log out">
+      <i class="bi bi-box-arrow-right"></i>
+    </a>
+  </nav>
+
+  <div class="p-4" style="max-width:1100px;margin:0 auto">
+
+    {% if not current_user.email_verified %}
+    <div class="alert d-flex align-items-center justify-content-between gap-3 mb-4" style="background:rgba(13,202,240,.12);border:1px solid rgba(13,202,240,.4)">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-envelope-exclamation fs-5"></i>
+        <span>Please verify your email address before uploading or accessing files. Check your inbox for the verification link.</span>
+      </div>
+      <button class="btn btn-sm btn-outline-info flex-shrink-0" id="resendBtn" onclick="resendVerification()">Resend email</button>
+    </div>
+    {% endif %}
+
+    <!-- Storage -->
+    <div class="chart-card mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="chart-card-title mb-0"><i class="bi bi-hdd me-1"></i>Storage</span>
+        <span class="small text-muted">{{ used_human }} of {{ quota_human }} used</span>
+      </div>
+      <div class="progress" style="height:8px">
+        <div class="progress-bar {% if quota_pct >= 90 %}bg-danger{% elif quota_pct >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
+             style="width:{{ quota_pct }}%"></div>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="chart-card mb-4">
+      <div class="chart-card-title mb-3"><i class="bi bi-cloud-upload me-1"></i>Upload a file</div>
+      <div class="upload-dropzone {% if not current_user.email_verified %}opacity-50{% endif %}" id="dropZone"
+           style="{% if not current_user.email_verified %}pointer-events:none{% endif %}">
+        <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2 upload-icon"></i>
+        <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
+        <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="document.getElementById('fileInput').click()">Browse file</button>
+        <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
+      </div>
+      <input type="file" id="fileInput" class="d-none"/>
+      <div id="uploadProgress" class="d-none mt-3">
+        <div class="d-flex justify-content-between small mb-1">
+          <span>Uploading…</span><span id="uploadProgressPct">0%</span>
+        </div>
+        <div class="progress" style="height:8px">
+          <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <small class="text-muted">Images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small>
+        <button type="button" class="btn btn-primary btn-sm" id="uploadBtn" onclick="startUpload()"
+                {% if not current_user.email_verified %}disabled{% endif %}>
+          <i class="bi bi-upload me-1"></i>Upload
+        </button>
+      </div>
+    </div>
+
+    <!-- Files -->
+    <div class="chart-card">
+      <div class="chart-card-title mb-3"><i class="bi bi-files me-1"></i>Your files ({{ files|length }})</div>
+      {% if files %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead>
+            <tr><th>File</th><th>Status</th><th>Alerts</th><th>Uploaded</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+          {% for f in files %}
+            {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
+            <tr id="row-{{ f.uuid }}">
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  <i class="bi {{ f.icon }} fs-5"></i>
+                  <div>
+                    <div class="fw-semibold text-truncate" style="max-width:260px" title="{{ f.original_name }}">{{ f.original_name }}</div>
+                    <div class="text-muted" style="font-size:.75rem">{{ f.size_human }}</div>
+                  </div>
+                </div>
+              </td>
+              <td>{{ f.status_badge[0] | safe }}</td>
+              <td>
+                {% if f.open_alert_count > 0 %}
+                <span class="badge bg-danger">{{ f.open_alert_count }}</span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+              </td>
+              <td class="text-muted small">{{ f.uploaded_at.strftime('%b %d, %Y') }}</td>
+              <td>
+                <div class="d-flex gap-1 flex-wrap">
+                  {% if _fext in previewable_exts %}
+                  <button class="btn btn-sm btn-outline-secondary" title="Preview content"
+                          onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                    <i class="bi bi-eye"></i>
+                  </button>
+                  {% endif %}
+                  {% if f.is_encrypted %}
+                  <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
+                          onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                    <i class="bi bi-unlock"></i>
+                  </button>
+                  {% else %}
+                  <a href="{{ url_for('vault_download', file_uuid=f.uuid) }}" class="btn btn-sm btn-outline-secondary" title="Download">
+                    <i class="bi bi-download"></i>
+                  </a>
+                  {% endif %}
+                  <button class="btn btn-sm btn-outline-danger" title="Delete"
+                          onclick="openDelete('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-inbox display-4 d-block mb-2"></i>
+        No files yet — upload your first one above.
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<!-- Decrypt & Download modal -->
+<div class="modal fade" id="decryptModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-unlock me-2 text-warning"></i>Decrypt &amp; Download</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Enter your password to decrypt and download <strong id="decryptFileName"></strong>.</p>
+        <input type="password" id="decryptPassword" class="form-control form-control-sm" placeholder="Your login password" autocomplete="current-password"/>
+        <div id="decryptError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-warning" id="decryptConfirm"><i class="bi bi-unlock me-1"></i>Decrypt &amp; Download</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-eye me-2 text-secondary"></i>Preview</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Enter your password to preview <strong id="previewFileName"></strong>.</p>
+        <input type="password" id="previewPassword" class="form-control form-control-sm" placeholder="Your login password" autocomplete="current-password"/>
+        <div id="previewError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="previewConfirm"><i class="bi bi-eye me-1"></i>Preview</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-trash me-2 text-danger"></i>Delete file</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">This permanently deletes <strong id="deleteFileName"></strong>. Enter your password to confirm.</p>
+        <input type="password" id="deletePassword" class="form-control form-control-sm" placeholder="Your login password" autocomplete="current-password"/>
+        <div id="deleteError" class="text-danger small mt-1" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-danger" id="deleteConfirm"><i class="bi bi-trash me-1"></i>Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+async function resendVerification() {
+  const btn = document.getElementById('resendBtn');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Sending…';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  try {
+    const r = await fetch('{{ url_for("vault_resend_verification") }}', { method: 'POST', body: form });
+    const d = await r.json();
+    showToast(d.message || d.error, d.success ? 'success' : 'danger');
+  } catch(e) {
+    showToast('Network error — please try again.', 'danger');
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+
+// ── Upload ──
+const dz = document.getElementById('dropZone');
+const fi = document.getElementById('fileInput');
+if (dz) {
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length) { fi.files = e.dataTransfer.files; showFileName(fi); }
+  });
+  fi.addEventListener('change', () => showFileName(fi));
+}
+function showFileName(input) {
+  document.getElementById('fileChosenName').textContent = input.files[0]?.name ? `Selected: ${input.files[0].name}` : '';
+}
+
+async function startUpload() {
+  const file = fi.files[0];
+  if (!file) { showToast('Please select a file first.', 'warning'); return; }
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  document.getElementById('uploadProgress').classList.remove('d-none');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('csrf_token', CSRF);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '{{ url_for("vault_upload") }}');
+  xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    document.getElementById('uploadProgressBar').style.width = pct + '%';
+    document.getElementById('uploadProgressPct').textContent = pct + '%';
+  };
+  xhr.onload = () => {
+    btn.disabled = false;
+    document.getElementById('uploadProgress').classList.add('d-none');
+    document.getElementById('uploadProgressBar').style.width = '0%';
+    let d = {};
+    try { d = JSON.parse(xhr.responseText); } catch(e) {}
+    if (d.success) {
+      showToast('File uploaded.', 'success');
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast(d.error || 'Upload failed.', 'danger');
+    }
+  };
+  xhr.onerror = () => {
+    btn.disabled = false;
+    document.getElementById('uploadProgress').classList.add('d-none');
+    showToast('Network error during upload.', 'danger');
+  };
+  xhr.send(form);
+}
+
+// ── Decrypt & Download ──
+let _decryptUuid = null, _decryptName = null;
+function openDecrypt(fileUuid, fileName) {
+  _decryptUuid = fileUuid; _decryptName = fileName;
+  document.getElementById('decryptFileName').textContent = fileName;
+  document.getElementById('decryptPassword').value = '';
+  document.getElementById('decryptError').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('decryptModal')).show();
+  setTimeout(() => document.getElementById('decryptPassword').focus(), 300);
+}
+document.getElementById('decryptConfirm')?.addEventListener('click', async () => {
+  const password = document.getElementById('decryptPassword').value;
+  const errEl = document.getElementById('decryptError');
+  const btn = document.getElementById('decryptConfirm');
+  if (!password) { errEl.textContent = 'Please enter your password.'; errEl.style.display = ''; return; }
+  errEl.style.display = 'none';
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Decrypting…';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('password', password);
+  try {
+    const r = await fetch(`/vault/decrypt/${_decryptUuid}`, { method: 'POST', body: form });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      errEl.textContent = d.error || 'Decryption failed.';
+      errEl.style.display = '';
+      btn.disabled = false; btn.innerHTML = origHtml;
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = _decryptName; a.click();
+    URL.revokeObjectURL(url);
+    bootstrap.Modal.getInstance(document.getElementById('decryptModal')).hide();
+    showToast(`"${_decryptName}" decrypted and downloaded.`, 'success');
+  } catch(e) {
+    errEl.textContent = 'Network error — please try again.';
+    errEl.style.display = '';
+  }
+  btn.disabled = false; btn.innerHTML = origHtml;
+});
+document.getElementById('decryptPassword')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('decryptConfirm').click();
+});
+
+// ── Preview ──
+let _previewUuid = null;
+function openPreview(fileUuid, fileName) {
+  _previewUuid = fileUuid;
+  document.getElementById('previewFileName').textContent = fileName;
+  document.getElementById('previewPassword').value = '';
+  document.getElementById('previewError').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('previewModal')).show();
+  setTimeout(() => document.getElementById('previewPassword').focus(), 300);
+}
+document.getElementById('previewConfirm')?.addEventListener('click', async () => {
+  const password = document.getElementById('previewPassword').value;
+  const errEl = document.getElementById('previewError');
+  const btn = document.getElementById('previewConfirm');
+  if (!password) { errEl.textContent = 'Please enter your password.'; errEl.style.display = ''; return; }
+  errEl.style.display = 'none';
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading…';
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(`/vault/preview-auth/${_previewUuid}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ password }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.success) {
+      if (win) win.close();
+      errEl.textContent = d.error || 'Preview failed.';
+      errEl.style.display = '';
+      btn.disabled = false; btn.innerHTML = origHtml;
+      return;
+    }
+    if (win) win.location.href = d.preview_url;
+    else window.open(d.preview_url, '_blank');
+    bootstrap.Modal.getInstance(document.getElementById('previewModal')).hide();
+  } catch(e) {
+    if (win) win.close();
+    errEl.textContent = 'Network error — please try again.';
+    errEl.style.display = '';
+  }
+  btn.disabled = false; btn.innerHTML = origHtml;
+});
+document.getElementById('previewPassword')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('previewConfirm').click();
+});
+
+// ── Delete ──
+let _deleteUuid = null;
+function openDelete(fileUuid, fileName) {
+  _deleteUuid = fileUuid;
+  document.getElementById('deleteFileName').textContent = fileName;
+  document.getElementById('deletePassword').value = '';
+  document.getElementById('deleteError').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('deleteModal')).show();
+  setTimeout(() => document.getElementById('deletePassword').focus(), 300);
+}
+document.getElementById('deleteConfirm')?.addEventListener('click', async () => {
+  const password = document.getElementById('deletePassword').value;
+  const errEl = document.getElementById('deleteError');
+  const btn = document.getElementById('deleteConfirm');
+  if (!password) { errEl.textContent = 'Please enter your password.'; errEl.style.display = ''; return; }
+  errEl.style.display = 'none';
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
+  const form = new FormData();
+  form.append('csrf_token', CSRF);
+  form.append('password', password);
+  try {
+    const r = await fetch(`/vault/delete/${_deleteUuid}`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: form });
+    const d = await r.json();
+    if (d.success) {
+      bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+      showToast('File deleted.', 'success');
+      document.getElementById('row-' + _deleteUuid)?.remove();
+    } else {
+      errEl.textContent = d.error || 'Delete failed.';
+      errEl.style.display = '';
+    }
+  } catch(e) {
+    errEl.textContent = 'Network error — please try again.';
+    errEl.style.display = '';
+  }
+  btn.disabled = false; btn.innerHTML = origHtml;
+});
+document.getElementById('deletePassword')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('deleteConfirm').click();
+});
+</script>
+{% endblock %}

@@ -231,6 +231,9 @@ EDITABLE_EXTENSIONS = {
 }
 EDITOR_SIZE_LIMIT   = 512 * 1024  # 512 KB
 
+# Extensions the in-browser preview can actually render (images, PDF, text/code)
+PREVIEWABLE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'pdf'} | EDITABLE_EXTENSIONS
+
 ACTION_ICONS = {
     'upload':   ('bi-cloud-upload-fill',  'text-primary'),
     'download': ('bi-cloud-download-fill','text-info'),
@@ -739,8 +742,8 @@ def _fim_accept_baseline(file_rec, user, note=''):
 @app.context_processor
 def _fim_nav_context():
     """Inject FIM nav badge counts into every template."""
-    if not current_user.is_authenticated:
-        return {'fim_open_alerts': 0, 'nav_total_files': 0}
+    if not current_user.is_authenticated or current_user.is_personal:
+        return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_action_requests': 0}
     try:
         if current_user.is_admin:
             open_count   = IntegrityAlert.query.filter_by(status='open').count()
@@ -758,12 +761,35 @@ def _fim_nav_context():
         return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_action_requests': 0}
 
 
+_PERSONAL_ALLOWED_ENDPOINTS = {
+    'vault_dashboard', 'vault_upload', 'vault_download', 'vault_decrypt',
+    'vault_preview_auth', 'vault_delete', 'vault_resend_verification',
+    'vault_login', 'vault_register', 'preview_file', 'auth_logout',
+    'verify_email', 'index', 'static',
+}
+
+
+@app.before_request
+def _guard_personal_accounts():
+    """Personal Vault accounts are confined to their own routes — the org-wide
+    enterprise system (admin panel, clearance levels, approvals, other users'
+    files) is never reachable from a personal account, regardless of what URL
+    is requested."""
+    if not current_user.is_authenticated or not current_user.is_personal:
+        return
+    if request.endpoint in _PERSONAL_ALLOWED_ENDPOINTS:
+        return
+    return redirect(url_for('vault_dashboard'))
+
+
 # ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------
 @app.route('/')
 def index():
-    return redirect(url_for('dashboard') if current_user.is_authenticated else url_for('auth_login'))
+    if current_user.is_authenticated:
+        return redirect(url_for('vault_dashboard') if current_user.is_personal else url_for('dashboard'))
+    return render_template('landing.html')
 
 
 @app.route('/auth/login', methods=['GET', 'POST'])
@@ -785,6 +811,9 @@ def auth_login():
             return render_template('auth/login.html')
 
         user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password) and user.is_personal:
+            flash('This account is registered as a Personal Vault account. Please use the Personal Vault login.', 'warning')
+            return render_template('auth/login.html')
         if user and user.check_password(password):
             _login_attempts.pop(email, None)
             login_user(user, remember=False)
@@ -865,7 +894,8 @@ def auth_register():
             is_first = User.query.count() == 0
             user = User(full_name=full_name, email=email,
                         is_admin=is_first,
-                        role='super_admin' if is_first else 'user')
+                        role='super_admin' if is_first else 'user',
+                        account_type='enterprise')
             user.set_password(password)
             db.session.add(user)
             db.session.flush()
@@ -1060,11 +1090,308 @@ def mfa_disable():
 @login_required
 def auth_logout():
     name = current_user.full_name.split()[0]
+    dest = 'vault_login' if current_user.is_personal else 'auth_login'
     log_activity('logout', 'Logged out')
     db.session.commit()
     logout_user()
     flash(f'Goodbye, {name}!', 'info')
-    return redirect(url_for('auth_login'))
+    return redirect(url_for(dest))
+
+
+# ---------------------------------------------------------------------------
+# Personal Vault — self-service accounts that upload/monitor only their own
+# files. No admin, no clearance levels, no approval workflow: the owner acts
+# on their own files directly, still password-confirmed per action, and
+# gated on email verification before any file action.
+# ---------------------------------------------------------------------------
+@app.route('/vault/register', methods=['GET', 'POST'])
+@limiter.limit('5 per minute; 20 per hour')
+def vault_register():
+    if current_user.is_authenticated:
+        return redirect(url_for('vault_dashboard') if current_user.is_personal else url_for('dashboard'))
+
+    if request.method == 'POST':
+        full_name = request.form.get('full_name', '').strip()
+        email     = request.form.get('email', '').strip().lower()
+        password  = request.form.get('password', '')
+        confirm   = request.form.get('confirm_password', '')
+
+        pwd_err = _validate_password_strength(password)
+        if not full_name or not email or not password:
+            flash('All fields are required.', 'danger')
+        elif password != confirm:
+            flash('Passwords do not match.', 'danger')
+        elif pwd_err:
+            flash(pwd_err, 'danger')
+        elif User.query.filter_by(email=email).first():
+            flash('An account with that email already exists.', 'danger')
+        else:
+            user = User(full_name=full_name, email=email,
+                        is_admin=False, role='user', account_type='personal',
+                        clearance_level=5)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.flush()
+            log_activity('register', f'New Personal Vault account: {email}', user_id=user.id)
+            db.session.commit()
+            _send_verification_email(user)
+            login_user(user)
+            session['_logged_in_this_session'] = True
+            flash('Account created! Check your email to verify your address before uploading files.', 'success')
+            return redirect(url_for('vault_dashboard'))
+
+    return render_template('auth/vault_register.html')
+
+
+@app.route('/vault/login', methods=['GET', 'POST'])
+@limiter.limit('10 per minute; 50 per hour')
+def vault_login():
+    if current_user.is_authenticated:
+        return redirect(url_for('vault_dashboard') if current_user.is_personal else url_for('dashboard'))
+
+    if request.method == 'POST':
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+
+        record = _login_attempts[email]
+        if record['locked_until'] and datetime.now(timezone.utc) < record['locked_until']:
+            secs = int((record['locked_until'] - datetime.now(timezone.utc)).total_seconds())
+            mins, secs = divmod(secs, 60)
+            flash(f'Account locked after too many failed attempts. '
+                  f'Try again in {mins}m {secs}s.', 'danger')
+            return render_template('auth/vault_login.html')
+
+        user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password) and not user.is_personal:
+            flash('This account is registered as an Enterprise account. Please use the Enterprise login.', 'warning')
+            return render_template('auth/vault_login.html')
+        if user and user.check_password(password):
+            _login_attempts.pop(email, None)
+            login_user(user, remember=False)
+            session['_logged_in_this_session'] = True
+            log_activity('login', f'Logged in from {_get_real_ip()}')
+            db.session.commit()
+            flash(f'Welcome back, {user.full_name.split()[0]}!', 'success')
+            return redirect(url_for('vault_dashboard'))
+
+        record['count'] += 1
+        remaining = _LOCKOUT_THRESHOLD - record['count']
+        if remaining <= 0:
+            record['locked_until'] = datetime.now(timezone.utc) + timedelta(minutes=_LOCKOUT_MINUTES)
+            flash(f'Too many failed attempts. Account locked for {_LOCKOUT_MINUTES} minutes.', 'danger')
+        else:
+            flash(f'Invalid email or password. {remaining} attempt(s) left before lockout.', 'danger')
+        log_activity('login_fail', f'Failed Personal Vault login for {email} from {request.remote_addr}')
+        db.session.commit()
+
+    return render_template('auth/vault_login.html')
+
+
+@app.route('/vault')
+@login_required
+def vault_dashboard():
+    if not current_user.is_personal:
+        return redirect(url_for('dashboard'))
+
+    files = File.query.filter_by(user_id=current_user.id).order_by(File.uploaded_at.desc()).all()
+    used  = sum(f.size for f in files)
+    quota = app.config['STORAGE_QUOTA_BYTES']
+
+    return render_template('vault/dashboard.html',
+        files=files,
+        used_human=format_bytes(used),
+        quota_human=format_bytes(quota),
+        quota_pct=min(100, int(used / quota * 100)) if quota else 0,
+        previewable_exts=PREVIEWABLE_EXTENSIONS,
+    )
+
+
+@app.route('/vault/upload', methods=['POST'])
+@login_required
+@limiter.limit('20 per hour')
+def vault_upload():
+    if not current_user.is_personal:
+        abort(403)
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
+    def err(msg, code=400):
+        if is_ajax:
+            return jsonify(success=False, error=msg), code
+        flash(msg, 'warning')
+        return redirect(url_for('vault_dashboard'))
+
+    if not current_user.email_verified:
+        return err('Please verify your email address before uploading files.', 403)
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return err('No file selected.')
+    f = request.files['file']
+    if not allowed_file(f.filename):
+        return err('File type not allowed.')
+
+    used  = sum(fl.size for fl in File.query.filter_by(user_id=current_user.id).all())
+    quota = app.config['STORAGE_QUOTA_BYTES']
+    f.seek(0, 2)
+    incoming_size = f.tell()
+    f.seek(0)
+    if used + incoming_size > quota:
+        return err('Storage quota exceeded.')
+
+    original_name = secure_filename(f.filename)
+    ext           = original_name.rsplit('.', 1)[-1].lower() if '.' in original_name else ''
+    stored_name   = f'{uuid.uuid4().hex}.{ext}' if ext else uuid.uuid4().hex
+    save_path     = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
+    raw_data      = f.read()
+    sha256_hash   = hashlib.sha256(raw_data).hexdigest()
+    _ff           = _file_fernet(stored_name)
+    disk_data     = _ff.encrypt(raw_data) if _ff else raw_data
+    with open(save_path, 'wb') as fh:
+        fh.write(disk_data)
+    size = len(raw_data)
+    mime = mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
+
+    try:
+        rec = File(original_name=original_name, stored_name=stored_name,
+                   size=size, mimetype=mime, user_id=current_user.id,
+                   is_encrypted=bool(_enc_key_raw), file_hash=sha256_hash,
+                   classification=5)
+        db.session.add(rec)
+        log_activity('upload', f'Uploaded "{original_name}" ({format_bytes(size)})')
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        return err('Database error, upload cancelled.', 500)
+
+    try:
+        _fim_capture_baseline(rec, current_user, reason='upload')
+        db.session.commit()
+    except Exception as _fim_exc:
+        app.logger.warning('FIM baseline capture failed for "%s": %s', original_name, _fim_exc)
+
+    if is_ajax:
+        return jsonify(success=True)
+    flash(f'"{original_name}" uploaded successfully.', 'success')
+    return redirect(url_for('vault_dashboard'))
+
+
+@app.route('/vault/download/<file_uuid>')
+@login_required
+def vault_download(file_uuid):
+    if not current_user.is_personal:
+        abort(403)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
+    if not current_user.email_verified:
+        flash('Please verify your email address first.', 'warning')
+        return redirect(url_for('vault_dashboard'))
+    if rec.is_encrypted:
+        flash('This file is encrypted. Use the "Decrypt & Download" button to access it securely.', 'warning')
+        return redirect(url_for('vault_dashboard'))
+    log_activity('download', f'Downloaded "{rec.original_name}"')
+    db.session.commit()
+    return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
+                               as_attachment=True, download_name=rec.original_name)
+
+
+@app.route('/vault/decrypt/<file_uuid>', methods=['POST'])
+@login_required
+@limiter.limit('5 per minute')
+def vault_decrypt(file_uuid):
+    if not current_user.is_personal:
+        abort(403)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
+    if not current_user.email_verified:
+        return jsonify(success=False, error='Please verify your email address first.'), 403
+    locked, lock_msg = _check_pw_locked(current_user.id)
+    if locked:
+        return jsonify(success=False, error=lock_msg), 429
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email,
+                                     f'Decrypt "{rec.original_name}"')
+        err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password. Use your FileVault login password.'
+        return jsonify(success=False, error=err), 401
+    _pw_attempts.pop(current_user.id, None)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], rec.stored_name)
+    if not os.path.exists(file_path):
+        return jsonify(success=False, error='File not found on server. Please re-upload the file.'), 404
+    with open(file_path, 'rb') as fh:
+        data = fh.read()
+    if rec.is_encrypted:
+        if not _enc_key_raw:
+            return jsonify(success=False, error='Encryption key not configured on server.'), 500
+        try:
+            data = _file_fernet(rec.stored_name).decrypt(data)
+        except Exception:
+            return jsonify(success=False, error='Decryption failed — file may be corrupted or key mismatch.'), 500
+    log_activity('download', f'Downloaded (decrypted) "{rec.original_name}"')
+    db.session.commit()
+    from io import BytesIO
+    return send_file(BytesIO(data), as_attachment=True, download_name=rec.original_name,
+                     mimetype=rec.mimetype or 'application/octet-stream')
+
+
+@app.route('/vault/preview-auth/<file_uuid>', methods=['POST'])
+@login_required
+@limiter.limit('10 per minute')
+def vault_preview_auth(file_uuid):
+    if not current_user.is_personal:
+        abort(403)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
+    if not current_user.email_verified:
+        return jsonify(success=False, error='Please verify your email address first.'), 403
+    data = request.get_json(silent=True) or {}
+    password = data.get('password', '')
+    if not password or not current_user.check_password(password):
+        return jsonify(success=False, error='Incorrect password. Please try again.'), 401
+    session[f'pv_{file_uuid}'] = True
+    log_activity('preview', f'Opened "{rec.original_name}"')
+    return jsonify(success=True, preview_url=url_for('preview_file', file_uuid=file_uuid))
+
+
+@app.route('/vault/delete/<file_uuid>', methods=['POST'])
+@login_required
+def vault_delete(file_uuid):
+    if not current_user.is_personal:
+        abort(403)
+    rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    if not current_user.email_verified:
+        return (jsonify(success=False, error='Please verify your email address first.'), 403) if is_ajax else abort(403)
+    locked, lock_msg = _check_pw_locked(current_user.id)
+    if locked:
+        return (jsonify(success=False, error=lock_msg), 429) if is_ajax else abort(429)
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        now_locked = _record_pw_fail(current_user.id, current_user.full_name, current_user.email,
+                                     f'Delete "{rec.original_name}"')
+        err = 'Too many failed attempts — you are locked out for 15 minutes.' if now_locked else 'Incorrect password.'
+        return (jsonify(success=False, error=err), 401) if is_ajax else abort(403)
+    _pw_attempts.pop(current_user.id, None)
+
+    name, stored = rec.original_name, rec.stored_name
+    log_activity('delete', f'Deleted "{name}"')
+    db.session.delete(rec)
+    db.session.commit()
+    disk = os.path.join(app.config['UPLOAD_FOLDER'], stored)
+    if os.path.exists(disk):
+        os.remove(disk)
+    if is_ajax:
+        return jsonify(success=True)
+    flash(f'"{name}" deleted.', 'success')
+    return redirect(url_for('vault_dashboard'))
+
+
+@app.route('/vault/resend-verification', methods=['POST'])
+@login_required
+@limiter.limit('3 per minute; 10 per hour')
+def vault_resend_verification():
+    if not current_user.is_personal:
+        abort(403)
+    if current_user.email_verified:
+        return jsonify(success=False, error='Your email is already verified.'), 400
+    _send_verification_email(current_user)
+    return jsonify(success=True, message='Verification email sent — check your inbox.')
 
 
 # ---------------------------------------------------------------------------
@@ -1137,6 +1464,8 @@ def profile():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    if current_user.is_personal:
+        return redirect(url_for('vault_dashboard'))
     # Legacy file-management section links redirect to monitoring page
     section = request.args.get('section', '')
     if section in ('my_files', 'shared_with_me', 'recent'):

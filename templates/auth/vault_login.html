@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% block title %}Personal Vault — Sign In{% endblock %}
+
+{% block body %}
+<div class="auth-wrapper d-flex min-vh-100">
+
+  <!-- Left panel -->
+  <div class="auth-brand d-none d-lg-flex flex-column justify-content-between p-5">
+    <div class="logo d-flex align-items-center gap-2">
+      <i class="bi bi-person-lock"></i>FileVault
+    </div>
+    <div class="position-relative" style="z-index:1">
+      <div class="mb-3" style="font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.45);font-weight:600">Personal Vault</div>
+      <h2 class="fw-bold mb-3" style="font-size:2rem;letter-spacing:-.03em;line-height:1.15">Your files.<br>Just yours.</h2>
+      <p style="color:rgba(255,255,255,.6);line-height:1.7;max-width:320px">Upload, encrypt, and monitor your own files — no admins, no approvals, full control.</p>
+    </div>
+    <div class="feature-pills d-flex flex-wrap gap-2">
+      <span class="badge rounded-pill"><i class="bi bi-shield-check me-1"></i>Encrypted</span>
+      <span class="badge rounded-pill"><i class="bi bi-eye me-1"></i>Monitored</span>
+      <span class="badge rounded-pill"><i class="bi bi-lock me-1"></i>Private</span>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="auth-form-panel d-flex align-items-center justify-content-center flex-grow-1 p-4">
+    <div class="auth-card w-100" style="max-width:420px">
+
+      <div class="text-center mb-4">
+        <div class="auth-icon mx-auto mb-3"><i class="bi bi-person-fill"></i></div>
+        <h4 class="fw-bold" style="letter-spacing:-.02em">Welcome back</h4>
+        <p class="text-muted small">Sign in to your Personal Vault</p>
+      </div>
+
+      <form method="POST" action="{{ url_for('vault_login') }}" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="loginEmail">Email address</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+            <input type="email" name="email" id="loginEmail" class="form-control"
+                   placeholder="you@example.com" required autofocus autocomplete="off"/>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold" for="passwordField">Password</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" name="password" id="passwordField" class="form-control"
+                   placeholder="••••••••" required autocomplete="new-password"/>
+            <button type="button" class="btn btn-outline-secondary" onclick="togglePwd(this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 fw-semibold py-2 mt-1" style="font-size:.95rem">
+          <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
+        </button>
+      </form>
+
+      <div class="divider-text my-4">or</div>
+      <p class="text-center text-muted small mb-2">
+        Don't have a Personal Vault?
+        <a href="{{ url_for('vault_register') }}" class="fw-semibold text-decoration-none">Create one free</a>
+      </p>
+      <p class="text-center text-muted small mb-0">
+        <a href="{{ url_for('index') }}" class="text-decoration-none"><i class="bi bi-arrow-left me-1"></i>Back to workspace selection</a>
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function togglePwd(btn) {
+  const f = document.getElementById('passwordField');
+  const show = f.type === 'password';
+  f.type = show ? 'text' : 'password';
+  btn.querySelector('i').className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+}
+</script>
+{% endblock %}

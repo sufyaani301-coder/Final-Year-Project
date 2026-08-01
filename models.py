@@ -81,6 +81,9 @@ class User(UserMixin, db.Model):
     alert_email            = db.Column(db.String(120), nullable=True)
     # Clearance level: 1=TOP SECRET (access all), 5=UNCLASSIFIED (access level-5 only)
     clearance_level        = db.Column(db.Integer, nullable=False, default=5)
+    # 'enterprise' = org-wide FIM system (admin uploads, clearance, approvals);
+    # 'personal'   = self-service vault where a user monitors only their own files
+    account_type           = db.Column(db.String(20), nullable=False, default='enterprise')
 
     files          = db.relationship('File', backref='owner', lazy=True,
                                      foreign_keys='File.user_id',
@@ -96,6 +99,10 @@ class User(UserMixin, db.Model):
     @property
     def is_super_admin(self):
         return self.role == 'super_admin'
+
+    @property
+    def is_personal(self):
+        return self.account_type == 'personal'
 
     @property
     def role_label(self):

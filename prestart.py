@@ -103,6 +103,7 @@ with app.app_context():
         "ALTER TABLE users ADD COLUMN alert_email VARCHAR(120)",
         "ALTER TABLE users ADD COLUMN clearance_level INTEGER NOT NULL DEFAULT 5",
         "ALTER TABLE files ADD COLUMN classification INTEGER NOT NULL DEFAULT 5",
+        "ALTER TABLE users ADD COLUMN account_type VARCHAR(20) NOT NULL DEFAULT 'enterprise'",
     ]:
         try:
             db.session.execute(text(_stmt))
