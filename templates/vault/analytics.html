@@ -1,0 +1,242 @@
+{% extends 'base.html' %}
+{% block title %}Analytics — Personal Vault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include 'vault/_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <span class="fw-semibold flex-grow-1">Analytics</span>
+      <!-- Period selector -->
+      <div class="btn-group btn-group-sm flex-shrink-0" id="periodSelector">
+        <button class="btn btn-outline-secondary active" data-days="7">7d</button>
+        <button class="btn btn-outline-secondary" data-days="30">30d</button>
+        <button class="btn btn-outline-secondary" data-days="90">90d</button>
+      </div>
+      <a href="{{ url_for('fim_export_report') }}" class="btn btn-sm btn-outline-secondary flex-shrink-0">
+        <i class="bi bi-download me-1"></i>Export
+      </a>
+      <button class="theme-toggle border-0 flex-shrink-0"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- KPI strip (filled by JS) -->
+      <div class="row g-3 mb-4" id="kpiRow">
+        <div class="col-6 col-md-3">
+          <div class="stat-card"><div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-graph-up"></i></div>
+            <div><div class="stat-value" id="kpiTotalChecks">—</div><div class="stat-label">Checks (7d)</div></div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card"><div class="stat-icon bg-success-subtle text-success"><i class="bi bi-check-circle"></i></div>
+            <div><div class="stat-value" id="kpiPassRate">—</div><div class="stat-label">Pass Rate (7d)</div></div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card"><div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-exclamation-triangle"></i></div>
+            <div><div class="stat-value" id="kpiTotalAlerts">—</div><div class="stat-label">Total Alerts (period)</div></div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card"><div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-shield-exclamation"></i></div>
+            <div><div class="stat-value" id="kpiOpenAlerts">—</div><div class="stat-label">Currently Open</div></div></div>
+        </div>
+      </div>
+
+      <!-- Charts row 1 -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-8">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-bar-chart-line me-1"></i>Alert Volume Trend</div>
+            <canvas id="trendChart" height="110"></canvas>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>Severity Distribution</div>
+            <canvas id="sevChart" height="160"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts row 2 -->
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>File Status Breakdown</div>
+            <canvas id="statusChart" height="160"></canvas>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-bar-chart me-1"></i>Alert Type Distribution</div>
+            <canvas id="typeChart" height="160"></canvas>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-speedometer me-1"></i>Check Pass Rate (7d)</div>
+            <canvas id="passRateChart" height="160"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const isDark    = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+  const labelColor = () => isDark() ? '#71717a' : '#6b7280';
+
+  let activeDays = 7;
+  let trendChartInst = null;
+
+  const SEV_COLORS   = { critical:'#ef4444', high:'#f97316', medium:'#f59e0b', low:'#3b82f6', info:'#6b7280' };
+  const STATUS_COLORS= { ok:'#22c55e', tampered:'#ef4444', missing:'#f59e0b', pending:'#94a3b8', error:'#f97316' };
+
+  async function loadData(days) {
+    const r = await fetch(`/vault/analytics/data?days=${days}`);
+    return r.json();
+  }
+
+  function initCharts(data) {
+    // KPI
+    document.getElementById('kpiTotalChecks').textContent = data.total_checks_7d.toLocaleString();
+    document.getElementById('kpiPassRate').textContent    = data.check_pass_rate + '%';
+    const totalAlerts = data.trend_counts.reduce((a,b)=>a+b, 0);
+    document.getElementById('kpiTotalAlerts').textContent = totalAlerts.toLocaleString();
+    const openCount = Object.values(data.severity_dist).reduce((a,b)=>a+b,0);
+    document.getElementById('kpiOpenAlerts').textContent  = openCount.toLocaleString();
+
+    // Trend
+    if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
+    const tCtx = document.getElementById('trendChart').getContext('2d');
+    trendChartInst = new Chart(tCtx, {
+      type: 'line',
+      data: {
+        labels:   data.trend_labels,
+        datasets: [{
+          label: 'Alerts',
+          data:  data.trend_counts,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,.12)',
+          fill: true, tension:.3, pointRadius:3,
+        }]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ grid:{ color:gridColor() }, ticks:{ color:labelColor(), maxTicksLimit:12 } },
+          y:{ beginAtZero:true, precision:0, grid:{ color:gridColor() }, ticks:{ color:labelColor() } }
+        }
+      }
+    });
+
+    // Severity doughnut
+    const sevCtx = document.getElementById('sevChart').getContext('2d');
+    if (window._sevChart) window._sevChart.destroy();
+    window._sevChart = new Chart(sevCtx, {
+      type:'doughnut',
+      data:{
+        labels: Object.keys(data.severity_dist).map(s=>s.charAt(0).toUpperCase()+s.slice(1)),
+        datasets:[{ data: Object.values(data.severity_dist),
+          backgroundColor: Object.keys(data.severity_dist).map(s=>SEV_COLORS[s]||'#6b7280'),
+          borderWidth:2, borderColor: isDark()?'#1f2937':'#fff' }]
+      },
+      options:{ responsive:true, cutout:'60%', plugins:{ legend:{ position:'bottom', labels:{ color:labelColor(), boxWidth:12, font:{size:11} } } } }
+    });
+
+    // Status doughnut
+    const stCtx = document.getElementById('statusChart').getContext('2d');
+    if (window._stChart) window._stChart.destroy();
+    window._stChart = new Chart(stCtx, {
+      type:'doughnut',
+      data:{
+        labels: Object.keys(data.status_dist).map(s=>s.charAt(0).toUpperCase()+s.slice(1)),
+        datasets:[{ data: Object.values(data.status_dist),
+          backgroundColor: Object.keys(data.status_dist).map(s=>STATUS_COLORS[s]||'#94a3b8'),
+          borderWidth:2, borderColor: isDark()?'#1f2937':'#fff' }]
+      },
+      options:{ responsive:true, cutout:'60%', plugins:{ legend:{ position:'bottom', labels:{ color:labelColor(), boxWidth:12, font:{size:11} } } } }
+    });
+
+    // Alert type bar chart
+    const tyCtx = document.getElementById('typeChart').getContext('2d');
+    if (window._tyChart) window._tyChart.destroy();
+    window._tyChart = new Chart(tyCtx, {
+      type:'bar',
+      data:{
+        labels: Object.keys(data.type_dist).map(t=>t.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())),
+        datasets:[{ label:'Count', data: Object.values(data.type_dist),
+          backgroundColor:'rgba(99,102,241,.7)', borderColor:'#6366f1', borderWidth:1, borderRadius:5 }]
+      },
+      options:{
+        indexAxis:'y', responsive:true,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ beginAtZero:true, precision:0, grid:{ color:gridColor() }, ticks:{ color:labelColor() } },
+          y:{ grid:{ display:false }, ticks:{ color:labelColor() } }
+        }
+      }
+    });
+
+    // Pass rate gauge (doughnut)
+    const prCtx = document.getElementById('passRateChart').getContext('2d');
+    if (window._prChart) window._prChart.destroy();
+    const pr = data.check_pass_rate;
+    window._prChart = new Chart(prCtx, {
+      type:'doughnut',
+      data:{
+        labels:['Passed','Failed'],
+        datasets:[{ data:[pr, 100-pr],
+          backgroundColor:[pr>=95?'#22c55e':pr>=80?'#f59e0b':'#ef4444','rgba(0,0,0,.08)'],
+          borderWidth:0 }]
+      },
+      options:{
+        responsive:true, cutout:'70%',
+        plugins:{
+          legend:{ display:false },
+          tooltip:{ callbacks:{ label: ctx => ` ${ctx.raw.toFixed(1)}%` } }
+        }
+      },
+      plugins:[{
+        id:'centerText',
+        beforeDraw(chart) {
+          const { ctx, chartArea:{ width, height, top } } = chart;
+          ctx.save();
+          ctx.font = `bold ${Math.min(width,height)*0.22}px Inter,sans-serif`;
+          ctx.fillStyle = labelColor();
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${pr}%`, width/2, top + height/2);
+          ctx.restore();
+        }
+      }]
+    });
+  }
+
+  // Period buttons
+  document.getElementById('periodSelector')?.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      document.querySelectorAll('#periodSelector button').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeDays = parseInt(btn.dataset.days);
+      const data = await loadData(activeDays);
+      initCharts(data);
+    });
+  });
+
+  // Theme toggle re-render
+  document.querySelector('.theme-toggle')?.addEventListener('click', () => {
+    setTimeout(async () => { const data = await loadData(activeDays); initCharts(data); }, 60);
+  });
+
+  // Initial load
+  loadData(7).then(initCharts);
+})();
+</script>
+{% endblock %}

@@ -773,6 +773,7 @@ def _fim_nav_context():
 _PERSONAL_ALLOWED_ENDPOINTS = {
     'vault_dashboard', 'vault_files', 'vault_upload', 'vault_download', 'vault_decrypt',
     'vault_preview_auth', 'vault_delete', 'vault_resend_verification',
+    'vault_analytics', 'vault_analytics_data', 'fim_export_report',
     'vault_login', 'vault_register', 'preview_file', 'auth_logout',
     'verify_email', 'index', 'static',
     # Account settings — same profile page/actions Enterprise users get
@@ -1253,6 +1254,62 @@ def vault_files():
         quota_human=format_bytes(quota),
         quota_pct=min(100, int(used / quota * 100)) if quota else 0,
         previewable_exts=PREVIEWABLE_EXTENSIONS,
+    )
+
+
+@app.route('/vault/analytics')
+@login_required
+def vault_analytics():
+    if not current_user.is_personal:
+        return redirect(url_for('dashboard'))
+    return render_template('vault/analytics.html')
+
+
+@app.route('/vault/analytics/data')
+@login_required
+def vault_analytics_data():
+    if not current_user.is_personal:
+        abort(403)
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 90)
+
+    own_file_ids = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+    alert_q = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(own_file_ids))
+    check_q = IntegrityCheck.query.filter(IntegrityCheck.file_id.in_(own_file_ids))
+    file_q  = File.query.filter_by(user_id=current_user.id)
+
+    now = datetime.now(timezone.utc)
+
+    labels, counts = [], []
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        labels.append(day.strftime('%b %d'))
+        counts.append(alert_q.filter(func.date(IntegrityAlert.raised_at) == str(day)).count())
+
+    sev_dist = {s: alert_q.filter_by(status='open', severity=s).count()
+                for s in ('critical', 'high', 'medium', 'low', 'info')}
+
+    status_dist = {s: file_q.filter_by(current_status=s).count()
+                   for s in ('ok', 'tampered', 'missing', 'pending', 'error')}
+
+    types = {}
+    for t in ('hash_mismatch', 'file_missing', 'double_extension', 'repeated_tampering'):
+        types[t] = alert_q.filter_by(alert_type=t).count()
+
+    week_ago = now - timedelta(days=7)
+    total_chk  = check_q.filter(IntegrityCheck.checked_at >= week_ago).count()
+    passed_chk = check_q.filter(IntegrityCheck.checked_at >= week_ago,
+                                 IntegrityCheck.status == 'ok').count()
+    pass_rate  = round(passed_chk / total_chk * 100, 1) if total_chk else 0
+
+    return jsonify(
+        trend_labels=labels,
+        trend_counts=counts,
+        severity_dist=sev_dist,
+        status_dist=status_dist,
+        type_dist=types,
+        check_pass_rate=pass_rate,
+        total_checks_7d=total_chk,
     )
 
 
