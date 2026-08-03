@@ -742,9 +742,18 @@ def _fim_accept_baseline(file_rec, user, note=''):
 @app.context_processor
 def _fim_nav_context():
     """Inject FIM nav badge counts into every template."""
-    if not current_user.is_authenticated or current_user.is_personal:
+    if not current_user.is_authenticated:
         return {'fim_open_alerts': 0, 'nav_total_files': 0, 'pending_action_requests': 0}
     try:
+        if current_user.is_personal:
+            own_file_ids = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+            open_count   = IntegrityAlert.query.filter(
+                IntegrityAlert.status == 'open',
+                IntegrityAlert.file_id.in_(own_file_ids),
+            ).count()
+            file_count   = File.query.filter_by(user_id=current_user.id).count()
+            return {'fim_open_alerts': open_count, 'nav_total_files': file_count,
+                    'pending_action_requests': 0}
         if current_user.is_admin:
             open_count   = IntegrityAlert.query.filter_by(status='open').count()
             file_count   = File.query.count()
@@ -762,7 +771,7 @@ def _fim_nav_context():
 
 
 _PERSONAL_ALLOWED_ENDPOINTS = {
-    'vault_dashboard', 'vault_upload', 'vault_download', 'vault_decrypt',
+    'vault_dashboard', 'vault_files', 'vault_upload', 'vault_download', 'vault_decrypt',
     'vault_preview_auth', 'vault_delete', 'vault_resend_verification',
     'vault_login', 'vault_register', 'preview_file', 'auth_logout',
     'verify_email', 'index', 'static',
@@ -1195,11 +1204,50 @@ def vault_dashboard():
     if not current_user.is_personal:
         return redirect(url_for('dashboard'))
 
+    own_file_ids = db.session.query(File.id).filter_by(user_id=current_user.id).subquery()
+    alert_q      = IntegrityAlert.query.filter(IntegrityAlert.file_id.in_(own_file_ids))
+    monitored    = File.query.filter_by(user_id=current_user.id, monitoring_enabled=True)
+
+    stats = dict(
+        total_monitored = monitored.count(),
+        ok              = monitored.filter_by(current_status='ok').count(),
+        tampered        = monitored.filter_by(current_status='tampered').count(),
+        missing         = monitored.filter_by(current_status='missing').count(),
+        pending         = monitored.filter_by(current_status='pending').count(),
+        error           = monitored.filter_by(current_status='error').count(),
+        open_alerts     = alert_q.filter_by(status='open').count(),
+    )
+
+    sev_counts = {s: alert_q.filter_by(status='open', severity=s).count()
+                  for s in ('critical', 'high', 'medium', 'low', 'info')}
+
+    now = datetime.now(timezone.utc)
+    trend_labels, trend_counts = [], []
+    for i in range(6, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        c   = alert_q.filter(func.date(IntegrityAlert.raised_at) == str(day)).count()
+        trend_labels.append(day.strftime('%a'))
+        trend_counts.append(c)
+
+    return render_template('vault/overview.html',
+        stats=stats,
+        sev_counts=sev_counts,
+        trend_labels=trend_labels,
+        trend_counts=trend_counts,
+    )
+
+
+@app.route('/vault/files')
+@login_required
+def vault_files():
+    if not current_user.is_personal:
+        return redirect(url_for('dashboard'))
+
     files = File.query.filter_by(user_id=current_user.id).order_by(File.uploaded_at.desc()).all()
     used  = sum(f.size for f in files)
     quota = app.config['STORAGE_QUOTA_BYTES']
 
-    return render_template('vault/dashboard.html',
+    return render_template('vault/files.html',
         files=files,
         used_human=format_bytes(used),
         quota_human=format_bytes(quota),
@@ -1220,7 +1268,7 @@ def vault_upload():
         if is_ajax:
             return jsonify(success=False, error=msg), code
         flash(msg, 'warning')
-        return redirect(url_for('vault_dashboard'))
+        return redirect(url_for('vault_files'))
 
     if 'file' not in request.files or request.files['file'].filename == '':
         return err('No file selected.')
@@ -1272,7 +1320,7 @@ def vault_upload():
     if is_ajax:
         return jsonify(success=True)
     flash(f'"{original_name}" uploaded successfully.', 'success')
-    return redirect(url_for('vault_dashboard'))
+    return redirect(url_for('vault_files'))
 
 
 @app.route('/vault/download/<file_uuid>')
@@ -1283,7 +1331,7 @@ def vault_download(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid, user_id=current_user.id).first_or_404()
     if rec.is_encrypted:
         flash('This file is encrypted. Use the "Decrypt & Download" button to access it securely.', 'warning')
-        return redirect(url_for('vault_dashboard'))
+        return redirect(url_for('vault_files'))
     log_activity('download', f'Downloaded "{rec.original_name}"')
     db.session.commit()
     return send_from_directory(app.config['UPLOAD_FOLDER'], rec.stored_name,
@@ -1370,7 +1418,7 @@ def vault_delete(file_uuid):
     if is_ajax:
         return jsonify(success=True)
     flash(f'"{name}" deleted.', 'success')
-    return redirect(url_for('vault_dashboard'))
+    return redirect(url_for('vault_files'))
 
 
 @app.route('/vault/resend-verification', methods=['POST'])

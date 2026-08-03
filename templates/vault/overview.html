@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+{% block title %}Security Overview — Personal Vault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+
+  {% include 'vault/_sidebar.html' %}
+
+  <!-- ── Main content ── -->
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <!-- Top navbar -->
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
+        <i class="bi bi-list fs-4"></i>
+      </button>
+      <span class="fw-semibold flex-grow-1" style="font-size:1rem">Security Overview</span>
+      <a href="{{ url_for('vault_files') }}" class="btn btn-primary d-flex align-items-center gap-2 flex-shrink-0">
+        <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline fw-semibold">Upload File</span>
+      </a>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
+        <i class="bi bi-moon-fill"></i>
+      </button>
+      <div class="dropdown flex-shrink-0">
+        <button class="btn p-0 border-0" data-bs-toggle="dropdown" aria-label="User menu">
+          <div class="avatar-circle">{{ current_user.initials }}</div>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end" style="min-width:210px">
+          <li class="px-3 py-2">
+            <div class="fw-semibold" style="font-size:.9rem">{{ current_user.full_name }}</div>
+            <div class="text-muted" style="font-size:.78rem">{{ current_user.email }}</div>
+          </li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('profile') }}"><i class="bi bi-person me-2 opacity-60"></i>Profile &amp; Settings</a></li>
+          <li><a class="dropdown-item" href="{{ url_for('activity_log') }}"><i class="bi bi-activity me-2 opacity-60"></i>Activity Log</a></li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)"><i class="bi bi-box-arrow-right me-2"></i>Sign Out</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    {% if not current_user.email_verified %}
+    <div class="alert alert-info d-flex align-items-center gap-2 mb-0 rounded-0 border-0 border-bottom px-4 py-2">
+      <i class="bi bi-envelope-exclamation-fill flex-shrink-0"></i>
+      <span class="small">Your email address isn't verified yet. Check your inbox for a verification link.</span>
+    </div>
+    {% endif %}
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <!-- ── Stats row ── -->
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-shield"></i></div>
+            <div><div class="stat-value">{{ stats.total_monitored }}</div><div class="stat-label">Monitored</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-shield-check"></i></div>
+            <div><div class="stat-value">{{ stats.ok }}</div><div class="stat-label">Healthy</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-shield-exclamation"></i></div>
+            <div><div class="stat-value">{{ stats.tampered }}</div><div class="stat-label">Tampered</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-file-earmark-x"></i></div>
+            <div><div class="stat-value">{{ stats.missing }}</div><div class="stat-label">Missing</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card">
+            <div class="stat-icon bg-secondary-subtle text-secondary"><i class="bi bi-hourglass-split"></i></div>
+            <div><div class="stat-value">{{ stats.pending }}</div><div class="stat-label">Pending</div></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+          <div class="stat-card {% if stats.open_alerts > 0 %}border border-danger{% endif %}">
+            <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-bell"></i></div>
+            <div><div class="stat-value {% if stats.open_alerts > 0 %}text-danger{% endif %}">{{ stats.open_alerts }}</div><div class="stat-label">Open Alerts</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Charts row ── -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-8">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-bar-chart-line me-1"></i>Alert Trend — Last 7 Days</div>
+            <canvas id="trendChart" height="90"></canvas>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="chart-card h-100">
+            <div class="chart-card-title"><i class="bi bi-pie-chart me-1"></i>Open Alerts by Severity</div>
+            {% set total_sev = sev_counts.critical + sev_counts.high + sev_counts.medium + sev_counts.low + sev_counts.info %}
+            {% if total_sev > 0 %}
+            <canvas id="sevChart" height="140"></canvas>
+            {% else %}
+            <div class="empty-state text-center py-4 text-muted"><i class="bi bi-check-circle fs-2 d-block mb-2 text-success"></i>No open alerts</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {% if stats.total_monitored == 0 %}
+      <div class="chart-card text-center text-muted py-5">
+        <i class="bi bi-shield-lock display-4 d-block mb-2"></i>
+        No files monitored yet.
+        <a href="{{ url_for('vault_files') }}">Upload your first file</a> to start integrity monitoring.
+      </div>
+      {% endif %}
+
+    </div><!-- /content-area -->
+  </div><!-- /main-content -->
+</div><!-- /wrapper -->
+
+<script>
+(function(){
+  const isDark    = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor  = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+  const labelColor = () => isDark() ? '#71717a' : '#6b7280';
+
+  const tCtx = document.getElementById('trendChart')?.getContext('2d');
+  if (tCtx) {
+    const tChart = new Chart(tCtx, {
+      type: 'bar',
+      data: {
+        labels:   {{ trend_labels | tojson }},
+        datasets: [{ label:'Alerts', data: {{ trend_counts | tojson }},
+          backgroundColor:'rgba(239,68,68,.65)', borderColor:'#ef4444',
+          borderWidth:1, borderRadius:5 }]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ grid:{ color:gridColor() }, ticks:{ color:labelColor() } },
+          y:{ beginAtZero:true, precision:0, grid:{ color:gridColor() }, ticks:{ color:labelColor() } }
+        }
+      }
+    });
+    document.querySelector('.theme-toggle')?.addEventListener('click', ()=>setTimeout(()=>{
+      tChart.options.scales.x.grid.color = gridColor();
+      tChart.options.scales.x.ticks.color = labelColor();
+      tChart.options.scales.y.grid.color = gridColor();
+      tChart.options.scales.y.ticks.color = labelColor();
+      tChart.update();
+    }, 50));
+  }
+
+  const sCtx = document.getElementById('sevChart')?.getContext('2d');
+  if (sCtx) {
+    const sevData = {{ sev_counts | tojson }};
+    new Chart(sCtx, {
+      type:'doughnut',
+      data:{
+        labels: Object.keys(sevData).map(s=>s.charAt(0).toUpperCase()+s.slice(1)),
+        datasets:[{
+          data: Object.values(sevData),
+          backgroundColor:['#ef4444','#f97316','#f59e0b','#3b82f6','#6b7280'],
+          borderWidth:2,
+          borderColor: isDark() ? '#1f2937' : '#ffffff',
+        }]
+      },
+      options:{
+        responsive:true, cutout:'60%',
+        plugins:{
+          legend:{ position:'bottom', labels:{ color:labelColor(), font:{size:11}, boxWidth:12, padding:8 } }
+        }
+      }
+    });
+  }
+})();
+
+document.querySelectorAll('.toast').forEach(t => setTimeout(()=>bootstrap.Toast.getOrCreateInstance(t).hide(), 4000));
+</script>
+{% endblock %}

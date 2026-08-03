@@ -1,149 +1,155 @@
 {% extends 'base.html' %}
-{% block title %}Personal Vault{% endblock %}
+{% block title %}Monitored Files — Personal Vault{% endblock %}
 
 {% block body %}
-<div style="min-height:100vh;background:var(--bg)">
+<div class="d-flex" id="wrapper">
 
-  <!-- Top bar -->
-  <nav class="d-flex align-items-center px-4 py-3 gap-3" style="background:var(--surface);border-bottom:1px solid var(--border)">
-    <div class="d-flex align-items-center gap-2 fw-bold" style="font-size:1.15rem">
-      <i class="bi bi-person-lock text-primary"></i>Personal Vault
-    </div>
-    <div class="flex-grow-1"></div>
-    <button class="theme-toggle border-0"><i class="bi bi-moon-fill"></i></button>
-    <div class="d-flex align-items-center gap-2">
-      <div class="avatar-circle-sm">{{ current_user.initials }}</div>
-      <div class="small">
-        <div class="fw-semibold">{{ current_user.full_name }}</div>
-        <div class="text-muted" style="font-size:.75rem">{{ current_user.email }}</div>
+  {% include 'vault/_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3" aria-label="Top navigation">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle" aria-label="Toggle sidebar">
+        <i class="bi bi-list fs-4"></i>
+      </button>
+      <span class="fw-semibold flex-grow-1" style="font-size:1rem">Monitored Files</span>
+      <button class="theme-toggle border-0 flex-shrink-0" aria-label="Toggle dark mode">
+        <i class="bi bi-moon-fill"></i>
+      </button>
+      <div class="dropdown flex-shrink-0">
+        <button class="btn p-0 border-0" data-bs-toggle="dropdown" aria-label="User menu">
+          <div class="avatar-circle">{{ current_user.initials }}</div>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end" style="min-width:210px">
+          <li class="px-3 py-2">
+            <div class="fw-semibold" style="font-size:.9rem">{{ current_user.full_name }}</div>
+            <div class="text-muted" style="font-size:.78rem">{{ current_user.email }}</div>
+          </li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('profile') }}"><i class="bi bi-person me-2 opacity-60"></i>Profile &amp; Settings</a></li>
+          <li><a class="dropdown-item" href="{{ url_for('activity_log') }}"><i class="bi bi-activity me-2 opacity-60"></i>Activity Log</a></li>
+          <li><hr class="dropdown-divider my-1"/></li>
+          <li><a class="dropdown-item" href="{{ url_for('auth_logout') }}" style="color:var(--danger)"><i class="bi bi-box-arrow-right me-2"></i>Sign Out</a></li>
+        </ul>
       </div>
-    </div>
-    <a href="{{ url_for('profile') }}" class="btn btn-sm btn-outline-secondary" title="Profile & Settings">
-      <i class="bi bi-gear"></i>
-    </a>
-    <a href="{{ url_for('auth_logout') }}" class="btn btn-sm btn-outline-secondary" title="Log out">
-      <i class="bi bi-box-arrow-right"></i>
-    </a>
-  </nav>
-
-  <div class="p-4" style="max-width:1100px;margin:0 auto">
+    </nav>
 
     {% if not current_user.email_verified %}
-    <div class="alert d-flex align-items-center justify-content-between gap-3 mb-4" style="background:rgba(13,202,240,.12);border:1px solid rgba(13,202,240,.4)">
-      <div class="d-flex align-items-center gap-2">
-        <i class="bi bi-envelope-exclamation fs-5"></i>
-        <span>Your email address isn't verified yet. Check your inbox for the verification link, or resend it below.</span>
-      </div>
+    <div class="alert alert-info d-flex align-items-center justify-content-between gap-3 mb-0 rounded-0 border-0 border-bottom px-4 py-2">
+      <span class="small"><i class="bi bi-envelope-exclamation-fill me-2"></i>Your email address isn't verified yet. Check your inbox for the verification link, or resend it.</span>
       <button class="btn btn-sm btn-outline-info flex-shrink-0" id="resendBtn" onclick="resendVerification()">Resend email</button>
     </div>
     {% endif %}
 
-    <!-- Storage -->
-    <div class="chart-card mb-4">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <span class="chart-card-title mb-0"><i class="bi bi-hdd me-1"></i>Storage</span>
-        <span class="small text-muted">{{ used_human }} of {{ quota_human }} used</span>
-      </div>
-      <div class="progress" style="height:8px">
-        <div class="progress-bar {% if quota_pct >= 90 %}bg-danger{% elif quota_pct >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
-             style="width:{{ quota_pct }}%"></div>
-      </div>
-    </div>
+    <div class="content-area p-4 flex-grow-1">
 
-    <!-- Upload -->
-    <div class="chart-card mb-4">
-      <div class="chart-card-title mb-3"><i class="bi bi-cloud-upload me-1"></i>Upload a file</div>
-      <div class="upload-dropzone" id="dropZone">
-        <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2 upload-icon"></i>
-        <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
-        <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="document.getElementById('fileInput').click()">Browse file</button>
-        <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
-      </div>
-      <input type="file" id="fileInput" class="d-none"/>
-      <div id="uploadProgress" class="d-none mt-3">
-        <div class="d-flex justify-content-between small mb-1">
-          <span>Uploading…</span><span id="uploadProgressPct">0%</span>
+      <!-- Storage -->
+      <div class="chart-card mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="chart-card-title mb-0"><i class="bi bi-hdd me-1"></i>Storage</span>
+          <span class="small text-muted">{{ used_human }} of {{ quota_human }} used</span>
         </div>
         <div class="progress" style="height:8px">
-          <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+          <div class="progress-bar {% if quota_pct >= 90 %}bg-danger{% elif quota_pct >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
+               style="width:{{ quota_pct }}%"></div>
         </div>
       </div>
-      <div class="d-flex justify-content-between align-items-center mt-3">
-        <small class="text-muted">Images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small>
-        <button type="button" class="btn btn-primary btn-sm" id="uploadBtn" onclick="startUpload()">
-          <i class="bi bi-upload me-1"></i>Upload
-        </button>
-      </div>
-    </div>
 
-    <!-- Files -->
-    <div class="chart-card">
-      <div class="chart-card-title mb-3"><i class="bi bi-files me-1"></i>Your files ({{ files|length }})</div>
-      {% if files %}
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
-          <thead>
-            <tr><th>File</th><th>Status</th><th>Alerts</th><th>Uploaded</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-          {% for f in files %}
-            {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
-            <tr id="row-{{ f.uuid }}">
-              <td>
-                <div class="d-flex align-items-center gap-2">
-                  <i class="bi {{ f.icon }} fs-5"></i>
-                  <div>
-                    <div class="fw-semibold text-truncate" style="max-width:260px" title="{{ f.original_name }}">{{ f.original_name }}</div>
-                    <div class="text-muted" style="font-size:.75rem">{{ f.size_human }}</div>
+      <!-- Upload -->
+      <div class="chart-card mb-4">
+        <div class="chart-card-title mb-3"><i class="bi bi-cloud-upload me-1"></i>Upload a file</div>
+        <div class="upload-dropzone" id="dropZone">
+          <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2 upload-icon"></i>
+          <p class="mb-1 fw-semibold">Drag &amp; drop or</p>
+          <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="document.getElementById('fileInput').click()">Browse file</button>
+          <div id="fileChosenName" class="mt-2 small text-primary fw-semibold"></div>
+        </div>
+        <input type="file" id="fileInput" class="d-none"/>
+        <div id="uploadProgress" class="d-none mt-3">
+          <div class="d-flex justify-content-between small mb-1">
+            <span>Uploading…</span><span id="uploadProgressPct">0%</span>
+          </div>
+          <div class="progress" style="height:8px">
+            <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mt-3">
+          <small class="text-muted">Images, PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, ZIP, RAR, MP4, MP3</small>
+          <button type="button" class="btn btn-primary btn-sm" id="uploadBtn" onclick="startUpload()">
+            <i class="bi bi-upload me-1"></i>Upload
+          </button>
+        </div>
+      </div>
+
+      <!-- Files -->
+      <div class="chart-card">
+        <div class="chart-card-title mb-3"><i class="bi bi-files me-1"></i>Your files ({{ files|length }})</div>
+        {% if files %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead>
+              <tr><th>File</th><th>Status</th><th>Alerts</th><th>Uploaded</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+            {% for f in files %}
+              {% set _fext = f.original_name.rsplit('.', 1)[-1].lower() if '.' in f.original_name else '' %}
+              <tr id="row-{{ f.uuid }}">
+                <td>
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi {{ f.icon }} fs-5"></i>
+                    <div>
+                      <div class="fw-semibold text-truncate" style="max-width:260px" title="{{ f.original_name }}">{{ f.original_name }}</div>
+                      <div class="text-muted" style="font-size:.75rem">{{ f.size_human }}</div>
+                    </div>
                   </div>
-                </div>
-              </td>
-              <td>{{ f.status_badge[0] | safe }}</td>
-              <td>
-                {% if f.open_alert_count > 0 %}
-                <span class="badge bg-danger">{{ f.open_alert_count }}</span>
-                {% else %}
-                <span class="text-muted">0</span>
-                {% endif %}
-              </td>
-              <td class="text-muted small">{{ f.uploaded_at.strftime('%b %d, %Y') }}</td>
-              <td>
-                <div class="d-flex gap-1 flex-wrap">
-                  {% if _fext in previewable_exts %}
-                  <button class="btn btn-sm btn-outline-secondary" title="Preview content"
-                          onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                    <i class="bi bi-eye"></i>
-                  </button>
-                  {% endif %}
-                  {% if f.is_encrypted %}
-                  <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
-                          onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                    <i class="bi bi-unlock"></i>
-                  </button>
+                </td>
+                <td>{{ f.status_badge[0] | safe }}</td>
+                <td>
+                  {% if f.open_alert_count > 0 %}
+                  <span class="badge bg-danger">{{ f.open_alert_count }}</span>
                   {% else %}
-                  <a href="{{ url_for('vault_download', file_uuid=f.uuid) }}" class="btn btn-sm btn-outline-secondary" title="Download">
-                    <i class="bi bi-download"></i>
-                  </a>
+                  <span class="text-muted">0</span>
                   {% endif %}
-                  <button class="btn btn-sm btn-outline-danger" title="Delete"
-                          onclick="openDelete('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                    <i class="bi bi-trash"></i>
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+                </td>
+                <td class="text-muted small">{{ f.uploaded_at.strftime('%b %d, %Y') }}</td>
+                <td>
+                  <div class="d-flex gap-1 flex-wrap">
+                    {% if _fext in previewable_exts %}
+                    <button class="btn btn-sm btn-outline-secondary" title="Preview content"
+                            onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                      <i class="bi bi-eye"></i>
+                    </button>
+                    {% endif %}
+                    {% if f.is_encrypted %}
+                    <button class="btn btn-sm btn-outline-warning" title="Decrypt & Download"
+                            onclick="openDecrypt('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                      <i class="bi bi-unlock"></i>
+                    </button>
+                    {% else %}
+                    <a href="{{ url_for('vault_download', file_uuid=f.uuid) }}" class="btn btn-sm btn-outline-secondary" title="Download">
+                      <i class="bi bi-download"></i>
+                    </a>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-danger" title="Delete"
+                            onclick="openDelete('{{ f.uuid }}', '{{ f.original_name | e }}')">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-inbox display-4 d-block mb-2"></i>
+          No files yet — upload your first one above.
+        </div>
+        {% endif %}
       </div>
-      {% else %}
-      <div class="text-center text-muted py-5">
-        <i class="bi bi-inbox display-4 d-block mb-2"></i>
-        No files yet — upload your first one above.
-      </div>
-      {% endif %}
-    </div>
 
+    </div>
   </div>
 </div>
 
