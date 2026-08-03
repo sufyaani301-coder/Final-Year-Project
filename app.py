@@ -1093,12 +1093,11 @@ def mfa_disable():
 @login_required
 def auth_logout():
     name = current_user.full_name.split()[0]
-    dest = 'vault_login' if current_user.is_personal else 'auth_login'
     log_activity('logout', 'Logged out')
     db.session.commit()
     logout_user()
     flash(f'Goodbye, {name}!', 'info')
-    return redirect(url_for(dest))
+    return redirect(url_for('index'))
 
 
 # ---------------------------------------------------------------------------
