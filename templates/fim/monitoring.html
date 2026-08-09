@@ -151,12 +151,6 @@
                    class="btn btn-sm btn-outline-secondary" title="View details">
                   <i class="bi bi-info-circle"></i>
                 </a>
-                {% if _can_access and _previewable %}
-                <button class="btn btn-sm btn-outline-secondary" title="Preview content"
-                        onclick="openPreview('{{ f.uuid }}', '{{ f.original_name | e }}')">
-                  <i class="bi bi-eye"></i>
-                </button>
-                {% endif %}
                 {% if _can_access %}
                   {% if f.current_status == 'pending' %}
                   <button class="btn btn-sm btn-outline-success" title="Capture baseline"

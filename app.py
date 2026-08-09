@@ -1839,20 +1839,9 @@ def decrypt_file(file_uuid):
 def preview_auth(file_uuid):
     rec = File.query.filter_by(uuid=file_uuid).first_or_404()
     if not current_user.is_admin:
-        if not current_user.can_view_file(rec):
-            _log_file_access('preview', rec, 'denied',
-                             f'Clearance L{current_user.clearance_level} insufficient for L{rec.classification} file')
-            db.session.commit()
-            _notify(
-                f'Access Denied — {rec.original_name}',
-                f'User:            {current_user.full_name} ({current_user.email})\n'
-                f'File:            {rec.original_name}\n'
-                f'Action:          Preview\n'
-                f'User clearance:  L{current_user.clearance_level} {current_user.clearance_label}\n'
-                f'File class.:     L{rec.classification} {rec.classification_label}\n'
-                f'Reason:          Clearance level insufficient',
-            )
-            return jsonify(success=False, error=f'Access denied — your clearance (L{current_user.clearance_level}) is below the required level for this file.'), 403
+        _log_file_access('preview', rec, 'denied', 'Preview is admin-only — non-admins must download the file')
+        db.session.commit()
+        return jsonify(success=False, error='Preview is only available to administrators. Please request a download instead.'), 403
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     if not password or not current_user.check_password(password):
