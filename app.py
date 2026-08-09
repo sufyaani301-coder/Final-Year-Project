@@ -7,6 +7,7 @@ print("=== app.py: start import ===", flush=True)
 import os
 import re
 import secrets
+import threading
 import uuid
 import mimetypes
 from datetime import datetime, timezone, timedelta
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, send_from_directory, send_file, jsonify, abort, session
@@ -186,6 +187,12 @@ _pw_attempts: dict = defaultdict(lambda: {'count': 0, 'locked_until': None})
 _PW_LOCK_THRESHOLD = 5
 _PW_LOCK_MINUTES   = 15
 
+# Serialises hash-chain writes so concurrent requests can't both read the
+# same "last entry" and fork the chain.
+_activity_chain_lock = threading.Lock()
+_access_chain_lock   = threading.Lock()
+_CHAIN_GENESIS        = '0' * 64
+
 def _check_pw_locked(user_id: int) -> tuple[bool, str]:
     rec = _pw_attempts[user_id]
     if rec['locked_until'] and datetime.now(timezone.utc) < rec['locked_until']:
@@ -322,6 +329,90 @@ def _get_real_ip():
         return forwarded.split(',')[0].strip()
     return request.remote_addr or ''
 
+# ---------------------------------------------------------------------------
+# Tamper-evident audit hash chain
+#
+# Each ActivityLog / FileAccessLog row stores entry_hash = SHA-256 of its own
+# content chained to the previous row's entry_hash (prev_hash). Altering,
+# deleting, or reordering a historical row breaks the chain from that point
+# forward — recomputing every hash and comparing (see _verify_chain) proves
+# whether the audit trail itself has been tampered with, not just the files
+# it describes. Datetimes are normalised to naive-UTC isoformat so the hash
+# computed at write time matches what's recomputed after a DB round-trip
+# (Postgres TIMESTAMP columns drop tzinfo on storage).
+# ---------------------------------------------------------------------------
+def _activity_entry_payload(entry) -> str:
+    ts = entry.created_at.replace(tzinfo=None).isoformat() if entry.created_at else ''
+    return '|'.join(str(x) for x in (
+        entry.id, entry.user_id, entry.action, entry.detail or '',
+        entry.ip_address or '', ts, entry.prev_hash,
+    ))
+
+
+def _access_entry_payload(entry) -> str:
+    ts = entry.timestamp.replace(tzinfo=None).isoformat() if entry.timestamp else ''
+    return '|'.join(str(x) for x in (
+        entry.id, entry.user_id, entry.file_id, entry.action, entry.outcome,
+        entry.ip_address or '', entry.details or '', ts, entry.prev_hash,
+    ))
+
+
+def _pg_chain_lock(name: str) -> None:
+    """Postgres advisory lock held for the rest of this transaction, so two
+    concurrent requests can't both read the same 'last hash' and fork the
+    chain — an in-process Lock alone can't prevent that across separate,
+    not-yet-committed DB transactions. Auto-releases on commit/rollback.
+    No-op on SQLite, which already serialises writes at the file level."""
+    if db.engine.dialect.name == 'postgresql':
+        db.session.execute(text('SELECT pg_advisory_xact_lock(hashtext(:n))'), {'n': name})
+
+
+def _chain_activity_hash(entry) -> None:
+    """Set entry.prev_hash/entry_hash, chaining to the last hashed ActivityLog
+    row. Caller must have already flushed so entry.id/created_at are set."""
+    with _activity_chain_lock:
+        _pg_chain_lock('activity_logs_chain')
+        last = (ActivityLog.query
+                .filter(ActivityLog.entry_hash.isnot(None), ActivityLog.id != entry.id)
+                .order_by(ActivityLog.id.desc()).first())
+        entry.prev_hash = last.entry_hash if last else _CHAIN_GENESIS
+        entry.entry_hash = hashlib.sha256(_activity_entry_payload(entry).encode()).hexdigest()
+
+
+def _chain_access_hash(entry) -> None:
+    """Set entry.prev_hash/entry_hash, chaining to the last hashed
+    FileAccessLog row. Caller must have already flushed."""
+    with _access_chain_lock:
+        _pg_chain_lock('file_access_logs_chain')
+        last = (FileAccessLog.query
+                .filter(FileAccessLog.entry_hash.isnot(None), FileAccessLog.id != entry.id)
+                .order_by(FileAccessLog.id.desc()).first())
+        entry.prev_hash = last.entry_hash if last else _CHAIN_GENESIS
+        entry.entry_hash = hashlib.sha256(_access_entry_payload(entry).encode()).hexdigest()
+
+
+def _verify_chain(model, payload_fn):
+    """Walk a chain in id order, recomputing and comparing each hash.
+    Returns dict(ok, checked, unchained, break_id, break_reason)."""
+    prev = _CHAIN_GENESIS
+    checked = 0
+    unchained = 0
+    for row in model.query.order_by(model.id.asc()).all():
+        if row.entry_hash is None:
+            unchained += 1
+            continue
+        if row.prev_hash != prev:
+            return dict(ok=False, checked=checked, unchained=unchained,
+                        break_id=row.id, break_reason='Broken link — this entry does not chain to the previous one (row deleted, reordered, or inserted out of band).')
+        recomputed = hashlib.sha256(payload_fn(row).encode()).hexdigest()
+        if recomputed != row.entry_hash:
+            return dict(ok=False, checked=checked, unchained=unchained,
+                        break_id=row.id, break_reason='Hash mismatch — this entry\'s stored content does not match its recorded hash (row was edited after being logged).')
+        prev = row.entry_hash
+        checked += 1
+    return dict(ok=True, checked=checked, unchained=unchained, break_id=None, break_reason=None)
+
+
 def log_activity(action, detail='', user_id=None):
     uid = user_id if user_id is not None else (
         current_user.id if current_user.is_authenticated else None)
@@ -332,6 +423,8 @@ def log_activity(action, detail='', user_id=None):
         ip_address=_get_real_ip(),
     )
     db.session.add(entry)
+    db.session.flush()
+    _chain_activity_hash(entry)
 
 
 def broadcast_event(event_type, message, filename='', user_name=''):
@@ -384,6 +477,8 @@ def _log_file_access(action, file_rec=None, outcome='success', details=None):
         details    = details,
     )
     db.session.add(entry)
+    db.session.flush()
+    _chain_access_hash(entry)
     # Real-time push to admin event monitor (fire-and-forget — never crash the caller)
     try:
         socketio.emit('access_event', {
@@ -2568,6 +2663,23 @@ def bulk_download():
     db.session.commit()
     fname = f'filevault_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.zip'
     return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=fname)
+
+
+# ---------------------------------------------------------------------------
+# Admin — audit trail integrity verification
+# ---------------------------------------------------------------------------
+@app.route('/admin/audit/verify')
+@login_required
+def admin_audit_verify():
+    if not current_user.is_admin:
+        abort(403)
+    activity = _verify_chain(ActivityLog, _activity_entry_payload)
+    access   = _verify_chain(FileAccessLog, _access_entry_payload)
+    log_activity('audit_verify',
+        f'Ran audit trail integrity check — activity: {"OK" if activity["ok"] else "BROKEN"}, '
+        f'file access: {"OK" if access["ok"] else "BROKEN"}')
+    db.session.commit()
+    return render_template('admin/audit_verify.html', activity=activity, access=access)
 
 
 # ---------------------------------------------------------------------------

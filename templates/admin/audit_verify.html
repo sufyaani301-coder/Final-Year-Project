@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}Audit Trail Integrity — FileVault{% endblock %}
+
+{% block body %}
+<div class="d-flex" id="wrapper">
+  {% include '_sidebar.html' %}
+
+  <div class="main-content flex-grow-1 d-flex flex-column">
+    <nav class="top-navbar d-flex align-items-center px-4 gap-3">
+      <button class="btn btn-link p-0 text-muted d-lg-none" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <nav aria-label="breadcrumb" class="flex-grow-1">
+        <ol class="breadcrumb mb-0 small">
+          <li class="breadcrumb-item"><a href="{{ url_for('admin_panel') }}">Admin Panel</a></li>
+          <li class="breadcrumb-item active">Audit Trail Integrity</li>
+        </ol>
+      </nav>
+      <a href="{{ url_for('admin_audit_verify') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-repeat me-1"></i>Re-run
+      </a>
+      <button class="theme-toggle border-0"><i class="bi bi-moon-fill"></i></button>
+    </nav>
+
+    <div class="content-area p-4 flex-grow-1">
+
+      <p class="text-muted small mb-4" style="max-width:720px">
+        Every activity and file-access log entry is chained by hash to the one before it —
+        <code>entry_hash = SHA-256(content + previous entry_hash)</code>. Editing, deleting, or
+        reordering a historical row breaks the chain from that point forward. This re-walks both
+        chains end to end and recomputes every hash to prove (or disprove) that the audit trail
+        itself hasn't been tampered with.
+      </p>
+
+      <div class="row g-4">
+
+        <div class="col-md-6">
+          <div class="chart-card h-100">
+            <div class="chart-card-title mb-3"><i class="bi bi-activity me-1"></i>Activity Log Chain</div>
+            {% if activity.ok %}
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="badge bg-success fs-6"><i class="bi bi-shield-check me-1"></i>Intact</span>
+              <span class="text-muted small">{{ activity.checked }} entr{{ 'y' if activity.checked == 1 else 'ies' }} verified</span>
+            </div>
+            {% else %}
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="badge bg-danger fs-6"><i class="bi bi-shield-exclamation me-1"></i>Broken</span>
+              <span class="text-muted small">{{ activity.checked }} entr{{ 'y' if activity.checked == 1 else 'ies' }} verified before the break</span>
+            </div>
+            <div class="alert alert-danger small mb-3">
+              <strong>Break at entry #{{ activity.break_id }}</strong><br>
+              {{ activity.break_reason }}
+            </div>
+            {% endif %}
+            {% if activity.unchained > 0 %}
+            <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>{{ activity.unchained }} pre-existing entr{{ 'y' if activity.unchained == 1 else 'ies' }} predate this feature and aren't chained.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="chart-card h-100">
+            <div class="chart-card-title mb-3"><i class="bi bi-eye me-1"></i>File Access Log Chain</div>
+            {% if access.ok %}
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="badge bg-success fs-6"><i class="bi bi-shield-check me-1"></i>Intact</span>
+              <span class="text-muted small">{{ access.checked }} entr{{ 'y' if access.checked == 1 else 'ies' }} verified</span>
+            </div>
+            {% else %}
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="badge bg-danger fs-6"><i class="bi bi-shield-exclamation me-1"></i>Broken</span>
+              <span class="text-muted small">{{ access.checked }} entr{{ 'y' if access.checked == 1 else 'ies' }} verified before the break</span>
+            </div>
+            <div class="alert alert-danger small mb-3">
+              <strong>Break at entry #{{ access.break_id }}</strong><br>
+              {{ access.break_reason }}
+            </div>
+            {% endif %}
+            {% if access.unchained > 0 %}
+            <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>{{ access.unchained }} pre-existing entr{{ 'y' if access.unchained == 1 else 'ies' }} predate this feature and aren't chained.</div>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

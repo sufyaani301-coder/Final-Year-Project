@@ -316,6 +316,10 @@ class ActivityLog(db.Model):
     detail     = db.Column(db.String(500), default='')
     ip_address = db.Column(db.String(45),  default='')
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # Tamper-evident hash chain — see app.py's _chain_activity_hash().
+    # Null on rows written before this feature existed.
+    prev_hash  = db.Column(db.String(64), nullable=True)
+    entry_hash = db.Column(db.String(64), nullable=True, unique=True)
 
     user = db.relationship('User', foreign_keys='ActivityLog.user_id')
 
@@ -549,6 +553,10 @@ class FileAccessLog(db.Model):
     details     = db.Column(db.Text, nullable=True)
     timestamp   = db.Column(db.DateTime, nullable=False,
                             default=lambda: datetime.now(timezone.utc))
+    # Tamper-evident hash chain — see app.py's _chain_access_hash().
+    # Null on rows written before this feature existed.
+    prev_hash   = db.Column(db.String(64), nullable=True)
+    entry_hash  = db.Column(db.String(64), nullable=True, unique=True)
 
     file = db.relationship('File', foreign_keys=[file_id])
     user = db.relationship('User', foreign_keys=[user_id])

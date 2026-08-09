@@ -105,6 +105,13 @@ with app.app_context():
         "ALTER TABLE files ADD COLUMN classification INTEGER NOT NULL DEFAULT 5",
         "ALTER TABLE users ADD COLUMN account_type VARCHAR(20) NOT NULL DEFAULT 'enterprise'",
         "ALTER TABLE users ADD COLUMN admin_access_granted BOOLEAN NOT NULL DEFAULT FALSE",
+        # Tamper-evident audit hash chain
+        "ALTER TABLE activity_logs ADD COLUMN prev_hash VARCHAR(64)",
+        "ALTER TABLE activity_logs ADD COLUMN entry_hash VARCHAR(64)",
+        "ALTER TABLE activity_logs ADD CONSTRAINT uq_activity_logs_entry_hash UNIQUE (entry_hash)",
+        "ALTER TABLE file_access_logs ADD COLUMN prev_hash VARCHAR(64)",
+        "ALTER TABLE file_access_logs ADD COLUMN entry_hash VARCHAR(64)",
+        "ALTER TABLE file_access_logs ADD CONSTRAINT uq_file_access_logs_entry_hash UNIQUE (entry_hash)",
     ]:
         try:
             db.session.execute(text(_stmt))
