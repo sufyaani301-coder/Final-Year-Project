@@ -67,7 +67,9 @@
               </span>
             </td>
             <td class="fw-semibold">
-              {% if ar.file %}{{ ar.file.original_name }}{% else %}<span class="text-muted">deleted</span>{% endif %}
+              {% if ar.file %}{{ ar.file.original_name }}
+              {% elif ar.action_type=='upload' %}{{ ar.staged_original_name }} <span class="text-muted small fw-normal">({{ ar.staged_size|filesizeformat if ar.staged_size else '' }})</span>
+              {% else %}<span class="text-muted">deleted</span>{% endif %}
             </td>
             <td>
               {% if ar.file %}
@@ -78,6 +80,14 @@
                 {% else %}class-unclass{% endif %}">
                 {{ ar.file.classification_label }}
               </span>
+              {% elif ar.action_type=='upload' and ar.staged_classification %}
+              {% set fc = ar.staged_classification %}
+              <span class="badge class-badge
+                {% if fc==1 %}class-ts{% elif fc==2 %}class-secret
+                {% elif fc==3 %}class-conf{% elif fc==4 %}class-restricted
+                {% else %}class-unclass{% endif %}" title="Auto-set to requester's own clearance">
+                L{{ fc }}
+              </span>
               {% else %}—{% endif %}
             </td>
             <td>
@@ -85,6 +95,7 @@
                 {% if ar.action_type=='delete' %}bg-danger
                 {% elif ar.action_type=='download' %}bg-primary
                 {% elif ar.action_type=='edit' %}bg-warning text-dark
+                {% elif ar.action_type=='upload' %}bg-info text-dark
                 {% else %}bg-secondary{% endif %}">
                 {{ ar.action_label }}
               </span>
@@ -99,7 +110,7 @@
             <td>
               <div class="d-flex gap-1">
                 <button class="btn btn-sm btn-success approve-btn"
-                        data-id="{{ ar.id }}" data-name="{{ ar.file.original_name if ar.file else '' }}">
+                        data-id="{{ ar.id }}" data-name="{{ ar.file.original_name if ar.file else (ar.staged_original_name if ar.action_type=='upload' else '') }}">
                   <i class="bi bi-check-lg"></i> Approve
                 </button>
                 <button class="btn btn-sm btn-danger reject-btn"
@@ -140,7 +151,7 @@
       <div class="modal-body">
         <p>Approve <strong id="approve-action-label"></strong> for
           <span class="badge bg-primary" id="approve-file-name"></span>?</p>
-        <p class="text-muted small">The user will receive a 30-minute execution token and must confirm with their account password.</p>
+        <p class="text-muted small" id="approve-note">The user will receive a 30-minute execution token and must confirm with their account password.</p>
         <div class="mb-3">
           <label class="form-label fw-semibold">Reason / Note (optional)</label>
           <textarea class="form-control" id="approve-reason" rows="2"
@@ -199,8 +210,12 @@ let currentReqId = null;
 document.querySelectorAll('.approve-btn').forEach(btn => {
   btn.onclick = () => {
     currentReqId = btn.dataset.id;
-    document.getElementById('approve-action-label').textContent = btn.closest('tr').querySelector('td:nth-child(6) .badge').textContent.trim();
+    const actionLabel = btn.closest('tr').querySelector('td:nth-child(6) .badge').textContent.trim();
+    document.getElementById('approve-action-label').textContent = actionLabel;
     document.getElementById('approve-file-name').textContent  = btn.dataset.name;
+    document.getElementById('approve-note').textContent = actionLabel === 'Upload'
+      ? 'The file becomes live and monitored immediately — no further action needed from the user.'
+      : 'The user will receive a 30-minute execution token and must confirm with their account password.';
     document.getElementById('approve-reason').value = '';
     new bootstrap.Modal('#approveModal').show();
   };

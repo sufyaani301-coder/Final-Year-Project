@@ -2255,6 +2255,91 @@ def submit_action_request(file_uuid):
                    message='Request submitted. You will be notified when the administrator reviews it.')
 
 
+@app.route('/request-upload', methods=['POST'])
+@login_required
+@limiter.limit('20 per hour')
+def submit_upload_request():
+    """Non-admin users upload a file for admin approval. The file is encrypted
+    and written to disk now (staged on the ActionRequest row) but does not
+    become a real, monitored File until an admin approves it. Classification
+    is always the uploader's own clearance level — never user-selectable."""
+    if current_user.is_admin:
+        return jsonify(success=False, error='Admins upload directly from the Upload button.'), 400
+
+    justification = request.form.get('justification', '').strip()
+    if not justification:
+        return jsonify(success=False, error='Justification is required.'), 400
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify(success=False, error='No file selected.'), 400
+    f = request.files['file']
+    if not allowed_file(f.filename):
+        return jsonify(success=False, error='File type not allowed.'), 400
+
+    used  = sum(fl.size for fl in File.query.filter_by(user_id=current_user.id).all())
+    quota = app.config['STORAGE_QUOTA_BYTES']
+    f.seek(0, 2)
+    incoming_size = f.tell()
+    f.seek(0)
+    if used + incoming_size > quota:
+        return jsonify(success=False, error='Storage quota exceeded.'), 400
+
+    original_name = secure_filename(f.filename)
+    ext           = original_name.rsplit('.', 1)[-1].lower() if '.' in original_name else ''
+    stored_name   = f'{uuid.uuid4().hex}.{ext}' if ext else uuid.uuid4().hex
+    save_path     = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
+    raw_data      = f.read()
+    sha256_hash   = hashlib.sha256(raw_data).hexdigest()
+    _ff           = _file_fernet(stored_name)
+    disk_data     = _ff.encrypt(raw_data) if _ff else raw_data
+    with open(save_path, 'wb') as fh:
+        fh.write(disk_data)
+    size           = len(raw_data)
+    mime           = mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
+    classification = current_user.clearance_level or 5   # always the uploader's own clearance
+
+    try:
+        ar = ActionRequest(
+            file_id=None,
+            requested_by_id=current_user.id,
+            action_type='upload',
+            justification=justification[:1000],
+            staged_original_name=original_name,
+            staged_stored_name=stored_name,
+            staged_size=size,
+            staged_mimetype=mime,
+            staged_classification=classification,
+            staged_file_hash=sha256_hash,
+            staged_is_encrypted=bool(_enc_key_raw),
+        )
+        db.session.add(ar)
+        log_activity('request_submitted', f'Submitted upload request for "{original_name}" — {justification[:200]}')
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        return jsonify(success=False, error='Database error, request cancelled.'), 500
+
+    socketio.emit('action_request_new', {
+        'request_id': ar.id,
+        'action':     'upload',
+        'file':       original_name,
+        'user':       current_user.full_name,
+        'clearance':  current_user.clearance_level,
+        'timestamp':  ar.requested_at.strftime('%H:%M:%S'),
+    })
+    _notify(
+        f'New Upload Request — {original_name}',
+        f'User:            {current_user.full_name} ({current_user.email})\n'
+        f'File:            {original_name} ({format_bytes(size)})\n'
+        f'Classification:  L{classification} (uploader\'s own clearance — not user-selectable)\n'
+        f'Justification:   {justification[:500]}\n\n'
+        f'Log in to FileVault to approve or reject this upload.',
+    )
+    return jsonify(success=True, request_id=ar.id,
+                   message='Upload submitted for admin approval. You will be notified once it is reviewed.')
+
+
 @app.route('/admin/test-email', methods=['POST'])
 @login_required
 def admin_test_email():
@@ -2305,6 +2390,66 @@ def admin_approve_action_request(req_id):
     ar = ActionRequest.query.get_or_404(req_id)
     if ar.status != 'pending':
         return jsonify(success=False, error='Request already reviewed'), 400
+
+    if ar.action_type == 'upload':
+        # No separate "execute" step for uploads — approval itself finalises
+        # the file: create the File row, capture a baseline, start monitoring.
+        reason = request.form.get('reason', '').strip()
+        staged_path = os.path.join(app.config['UPLOAD_FOLDER'], ar.staged_stored_name or '')
+        if not ar.staged_stored_name or not os.path.exists(staged_path):
+            return jsonify(success=False, error='Staged file is missing from disk.'), 404
+        try:
+            rec = File(
+                original_name=ar.staged_original_name, stored_name=ar.staged_stored_name,
+                size=ar.staged_size, mimetype=ar.staged_mimetype, user_id=ar.requested_by_id,
+                is_encrypted=ar.staged_is_encrypted, file_hash=ar.staged_file_hash,
+                classification=ar.staged_classification,
+            )
+            db.session.add(rec)
+            db.session.flush()
+            ar.file_id        = rec.id
+            ar.status         = 'executed'
+            ar.reviewed_by_id = current_user.id
+            ar.reviewed_at    = datetime.now(timezone.utc)
+            ar.admin_reason   = reason or 'Approved.'
+            ar.executed_at    = datetime.now(timezone.utc)
+            log_activity('upload', f'Uploaded "{rec.original_name}" ({format_bytes(rec.size)}) '
+                                    f'— class {rec.classification_label} — approved by {current_user.full_name}')
+            _log_file_access('upload', rec, 'executed',
+                             f'Upload request #{ar.id} approved by {current_user.full_name}')
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify(success=False, error='Database error while finalising upload.'), 500
+
+        try:
+            _fim_capture_baseline(rec, ar.requested_by, reason='upload')
+            db.session.commit()
+        except Exception as _fim_exc:
+            app.logger.warning('FIM baseline capture failed for "%s": %s', rec.original_name, _fim_exc)
+
+        broadcast_event('upload', f'{ar.requested_by.full_name} uploaded "{rec.original_name}" (admin-approved)',
+                        rec.original_name, ar.requested_by.full_name)
+        _notify(
+            f'Upload Approved & Live — {rec.original_name}',
+            f'Admin:          {current_user.full_name}\n'
+            f'Uploaded by:    {ar.requested_by.full_name} ({ar.requested_by.email})\n'
+            f'File:           {rec.original_name} ({format_bytes(rec.size)})\n'
+            f'Classification: {rec.classification_label}\n'
+            f'Note:           {reason or "—"}',
+        )
+        socketio.emit('action_request_update', {
+            'request_id': ar.id, 'status': 'executed', 'reason': ar.admin_reason,
+            'user_id': ar.requested_by_id, 'action_type': 'upload',
+        })
+        _resend_email(
+            ar.requested_by.email,
+            f'[FileVault] Your upload of "{rec.original_name}" was APPROVED',
+            f'Hello {ar.requested_by.full_name},\n\n'
+            f'Your upload request for "{rec.original_name}" has been APPROVED and is now live and monitored.\n\n'
+            f'Note: {ar.admin_reason}\n\n--- FileVault',
+        )
+        return jsonify(success=True, message='Upload approved — file is now live and monitored.')
 
     reason = request.form.get('reason', '').strip()
     import secrets as _sec
@@ -2370,6 +2515,14 @@ def admin_reject_action_request(req_id):
     if not reason:
         return jsonify(success=False, error='Rejection reason is required.'), 400
 
+    if ar.action_type == 'upload' and ar.staged_stored_name:
+        staged_path = os.path.join(app.config['UPLOAD_FOLDER'], ar.staged_stored_name)
+        if os.path.exists(staged_path):
+            os.remove(staged_path)
+
+    display_name = ar.file.original_name if ar.file else (
+        ar.staged_original_name if ar.action_type == 'upload' else '(deleted)')
+
     ar.status         = 'rejected'
     ar.reviewed_by_id = current_user.id
     ar.reviewed_at    = datetime.now(timezone.utc)
@@ -2377,15 +2530,15 @@ def admin_reject_action_request(req_id):
     _log_file_access(ar.action_type, ar.file, 'rejected',
                      f'Rejected by {current_user.full_name}: {reason}')
     log_activity('request_rejected',
-                 f'Rejected {ar.action_type} request #{ar.id} for "{ar.file.original_name if ar.file else "?"}" '
+                 f'Rejected {ar.action_type} request #{ar.id} for "{display_name}" '
                  f'by {ar.requested_by.full_name} — {reason}')
     db.session.commit()
 
     _notify(
-        f'Request Rejected — {ar.action_type.title()} on {ar.file.original_name if ar.file else "file"}',
+        f'Request Rejected — {ar.action_type.title()} on {display_name}',
         f'Admin:    {current_user.full_name}\n'
         f'User:     {ar.requested_by.full_name} ({ar.requested_by.email})\n'
-        f'File:     {ar.file.original_name if ar.file else "(deleted)"}\n'
+        f'File:     {display_name}\n'
         f'Action:   {ar.action_label}\n'
         f'Reason:   {reason}\n'
         f'Request ID: #{ar.id}',

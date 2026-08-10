@@ -596,10 +596,11 @@ class ActionRequest(db.Model):
     with reason → user confirms with account password → action executes."""
     __tablename__ = 'action_requests'
     id              = db.Column(db.Integer, primary_key=True)
-    file_id         = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=False)
+    # Nullable: an 'upload' request has no existing file — see staged_* below.
+    file_id         = db.Column(db.Integer, db.ForeignKey('files.id', ondelete='CASCADE'), nullable=True)
     requested_by_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     reviewed_by_id  = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
-    action_type     = db.Column(db.String(20), nullable=False)   # download / edit / rename / delete
+    action_type     = db.Column(db.String(20), nullable=False)   # download / edit / rename / delete / replace / upload
     justification   = db.Column(db.Text, nullable=True)
     status          = db.Column(db.String(20), nullable=False, default='pending')
     # pending → approved/rejected; approved → executed/expired
@@ -610,6 +611,17 @@ class ActionRequest(db.Model):
     reviewed_at     = db.Column(db.DateTime, nullable=True)
     expires_at      = db.Column(db.DateTime, nullable=True)      # 30 min after approval
     executed_at     = db.Column(db.DateTime, nullable=True)
+
+    # 'upload' requests only: the file is encrypted and written to disk at
+    # request time, staged here, and only becomes a real File row (with a
+    # baseline + monitoring) once an admin approves — see admin_approve_action_request().
+    staged_original_name  = db.Column(db.String(260), nullable=True)
+    staged_stored_name    = db.Column(db.String(260), nullable=True)
+    staged_size            = db.Column(db.Integer, nullable=True)
+    staged_mimetype        = db.Column(db.String(120), nullable=True)
+    staged_classification   = db.Column(db.Integer, nullable=True)
+    staged_file_hash        = db.Column(db.String(64), nullable=True)
+    staged_is_encrypted     = db.Column(db.Boolean, nullable=True)
 
     file         = db.relationship('File', foreign_keys=[file_id])
     requested_by = db.relationship('User', foreign_keys=[requested_by_id])

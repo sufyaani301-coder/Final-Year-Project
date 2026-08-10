@@ -44,9 +44,20 @@
             {% for ar in requests.items %}
             <tr>
               <td>
-                <div class="fw-semibold small">{{ ar.file.original_name if ar.file else '(deleted)' }}</div>
+                <div class="fw-semibold small">
+                  {% if ar.file %}{{ ar.file.original_name }}
+                  {% elif ar.action_type=='upload' %}{{ ar.staged_original_name }}
+                  {% else %}(deleted){% endif %}
+                </div>
                 {% if ar.file %}
                 {% set fc = ar.file.classification or 5 %}
+                <span class="badge fw-semibold" style="font-size:.6rem;
+                  background:{% if fc==1 %}#7c0000{% elif fc==2 %}#b54a00{% elif fc==3 %}#856404
+                  {% elif fc==4 %}#084298{% else %}#155724{% endif %}">
+                  L{{ fc }}
+                </span>
+                {% elif ar.action_type=='upload' and ar.staged_classification %}
+                {% set fc = ar.staged_classification %}
                 <span class="badge fw-semibold" style="font-size:.6rem;
                   background:{% if fc==1 %}#7c0000{% elif fc==2 %}#b54a00{% elif fc==3 %}#856404
                   {% elif fc==4 %}#084298{% else %}#155724{% endif %}">

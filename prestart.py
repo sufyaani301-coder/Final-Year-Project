@@ -112,6 +112,15 @@ with app.app_context():
         "ALTER TABLE file_access_logs ADD COLUMN prev_hash VARCHAR(64)",
         "ALTER TABLE file_access_logs ADD COLUMN entry_hash VARCHAR(64)",
         "ALTER TABLE file_access_logs ADD CONSTRAINT uq_file_access_logs_entry_hash UNIQUE (entry_hash)",
+        # Self-service upload requests (non-admins), staged until admin approval
+        "ALTER TABLE action_requests ALTER COLUMN file_id DROP NOT NULL",
+        "ALTER TABLE action_requests ADD COLUMN staged_original_name VARCHAR(260)",
+        "ALTER TABLE action_requests ADD COLUMN staged_stored_name VARCHAR(260)",
+        "ALTER TABLE action_requests ADD COLUMN staged_size INTEGER",
+        "ALTER TABLE action_requests ADD COLUMN staged_mimetype VARCHAR(120)",
+        "ALTER TABLE action_requests ADD COLUMN staged_classification INTEGER",
+        "ALTER TABLE action_requests ADD COLUMN staged_file_hash VARCHAR(64)",
+        "ALTER TABLE action_requests ADD COLUMN staged_is_encrypted BOOLEAN",
     ]:
         try:
             db.session.execute(text(_stmt))
